@@ -1,0 +1,50 @@
+{
+  "skill_name": "llm-inference-research",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "帮我研究 vLLM 的调度架构，重点分析它的 continuous batching 和 PagedAttention 的设计原理和工程实现，输出一份 HTML 研究报告放到 CJ-Note 仓库，并更新主页。",
+      "expected_output": "一份自包含的 HTML 报告，保存在 reports/vllm-scheduling-architecture.html，包含：架构图（Mermaid）、continuous batching 原理说明、PagedAttention 内存管理图解、关键源码文件引用、性能对比图（Chart.js）、以及 TL;DR。index.html 应被更新或创建，包含指向该报告的卡片条目。",
+      "files": [],
+      "expectations": [
+        "生成了 reports/ 目录下的 HTML 文件",
+        "HTML 文件包含 Mermaid 架构图",
+        "HTML 文件包含 TL;DR 部分",
+        "HTML 文件包含 Chart.js 图表或说明为何省略图表",
+        "index.html 被创建或更新，包含新报告的条目",
+        "HTML 文件包含返回主页的链接",
+        "报告引用了真实的 vLLM 源码文件或 GitHub 链接"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "我想深入了解 speculative decoding 的原理，帮我写一份 feature deep dive 报告，解释 draft model + verification 的机制，分析它在什么场景下有效、什么场景下无效，以及业界主要推理框架是怎么实现的。保存到 CJ-Note 仓库并更新主页。",
+      "expected_output": "一份 feature deep dive 类型的 HTML 报告，保存在 reports/speculative-decoding-deep-dive.html，包含：投机解码机制图（Mermaid 序列图或流程图）、draft model 和 verification 的原理说明、适用场景分析、至少一个实际实现引用（如 vLLM/HuggingFace）、以及 TL;DR。index.html 包含新条目。",
+      "files": [],
+      "expectations": [
+        "生成了 reports/ 目录下的 HTML 文件",
+        "报告类型标注为 Feature Deep Dive",
+        "HTML 包含 Mermaid 流程图解释 speculative decoding 机制",
+        "HTML 包含 TL;DR 部分",
+        "报告分析了适用场景和局限性",
+        "报告引用了真实实现（vLLM、HuggingFace 或其他框架）",
+        "index.html 被更新"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "帮我读一读 Flash Attention 2 这篇论文（https://arxiv.org/abs/2307.08691），写一份论文研读报告，重点说清楚它相比 Flash Attention 1 改进了什么，为什么能更好地利用 GPU 的并行性，以及工程上的关键实现细节。输出 HTML 报告到 CJ-Note 仓库。",
+      "expected_output": "一份 paper reading 类型的 HTML 报告，保存在 reports/flash-attention-2.html，包含：论文元数据（作者/年份/arXiv），FA1 vs FA2 的对比（表格或对比图），GPU 并行性改进的原理说明，关键算法图解（Mermaid），以及 TL;DR。index.html 包含新条目。",
+      "files": [],
+      "expectations": [
+        "生成了 reports/ 目录下的 HTML 文件",
+        "报告类型标注为 Paper Reading",
+        "HTML 包含论文元数据（作者、年份、arXiv 链接）",
+        "HTML 包含 FA1 vs FA2 的对比内容",
+        "HTML 包含 TL;DR 部分",
+        "HTML 包含 Mermaid 图解或 Chart.js 可视化",
+        "index.html 被更新"
+      ]
+    }
+  ]
+}

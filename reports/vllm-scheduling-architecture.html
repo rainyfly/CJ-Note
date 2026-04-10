@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>vLLM 调度架构深度解析：Continuous Batching 与 PagedAttention — CJ-Note</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #0d1117; --surface: #161b22; --border: #30363d;
+      --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+      --green: #3fb950; --yellow: #d29922; --red: #f85149;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font-sans);
+           line-height: 1.7; padding: 0 1rem; }
+    .page-wrap { max-width: 900px; margin: 0 auto; padding: 2rem 0 4rem; }
+
+    /* Header */
+    .report-header { border-bottom: 1px solid var(--border); padding-bottom: 1.5rem; margin-bottom: 2rem; }
+    .report-header h1 { font-size: 1.9rem; color: var(--accent); margin-bottom: .5rem; }
+    .meta { color: var(--muted); font-size: .85rem; display: flex; gap: 1.5rem; flex-wrap: wrap; }
+    .meta span::before { content: "• "; }
+    .meta span:first-child::before { content: ""; }
+    .back-link { display: inline-block; margin-bottom: 1rem; color: var(--muted);
+                 text-decoration: none; font-size: .85rem; }
+    .back-link:hover { color: var(--accent); }
+
+    /* Sections */
+    h2 { font-size: 1.3rem; color: var(--text); margin: 2.5rem 0 .8rem;
+         padding-bottom: .4rem; border-bottom: 1px solid var(--border); }
+    h3 { font-size: 1.05rem; color: var(--accent); margin: 1.5rem 0 .5rem; }
+    h4 { font-size: .95rem; color: var(--muted); margin: 1rem 0 .3rem; text-transform: uppercase;
+         letter-spacing: .05em; }
+    p { margin-bottom: 1rem; color: var(--text); }
+    ul, ol { padding-left: 1.5rem; margin-bottom: 1rem; }
+    li { margin-bottom: .4rem; }
+
+    /* TL;DR box */
+    .tldr { background: var(--surface); border: 1px solid var(--accent);
+            border-left: 4px solid var(--accent); border-radius: 6px;
+            padding: 1rem 1.2rem; margin: 1.5rem 0; }
+    .tldr h3 { color: var(--accent); margin: 0 0 .5rem; font-size: .9rem;
+               text-transform: uppercase; letter-spacing: .1em; }
+    .tldr ul { padding-left: 1.2rem; }
+    .tldr li { margin-bottom: .3rem; }
+
+    /* Key-value info grid */
+    .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                 gap: .75rem; margin: 1rem 0 1.5rem; }
+    .info-card { background: var(--surface); border: 1px solid var(--border);
+                 border-radius: 6px; padding: .8rem 1rem; }
+    .info-card .label { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em;
+                        color: var(--muted); margin-bottom: .3rem; }
+    .info-card .value { font-size: 1.1rem; font-weight: 600; color: var(--accent);
+                        font-family: var(--font-mono); }
+
+    /* Code blocks */
+    pre { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+          padding: 1rem 1.2rem; overflow-x: auto; margin: 1rem 0; font-size: .85rem;
+          font-family: var(--font-mono); line-height: 1.5; }
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 3px;
+           padding: .15em .4em; font-size: .85em; font-family: var(--font-mono); }
+    pre code { background: none; border: none; padding: 0; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .9rem; }
+    th { background: var(--surface); color: var(--muted); font-weight: 600; text-align: left;
+         padding: .6rem .8rem; border: 1px solid var(--border); font-size: .8rem;
+         text-transform: uppercase; letter-spacing: .04em; }
+    td { padding: .6rem .8rem; border: 1px solid var(--border); vertical-align: top; }
+    tr:nth-child(even) td { background: rgba(255,255,255,.02); }
+
+    /* Chart containers */
+    .chart-wrap { background: var(--surface); border: 1px solid var(--border);
+                  border-radius: 8px; padding: 1.2rem; margin: 1.2rem 0; }
+    .chart-wrap h4 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+                     letter-spacing: .05em; margin-bottom: .8rem; }
+    .chart-wrap canvas { max-height: 320px; }
+
+    /* Mermaid diagrams */
+    .diagram-wrap { background: var(--surface); border: 1px solid var(--border);
+                    border-radius: 8px; padding: 1.5rem; margin: 1.2rem 0;
+                    overflow-x: auto; text-align: center; }
+    .diagram-wrap h4 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+                       letter-spacing: .05em; margin-bottom: 1rem; text-align: left; }
+
+    /* Callout boxes */
+    .callout { border-radius: 6px; padding: .8rem 1rem; margin: 1rem 0;
+               border-left: 4px solid; }
+    .callout.note { background: rgba(88,166,255,.07); border-color: var(--accent); }
+    .callout.tip  { background: rgba(63,185,80,.07);  border-color: var(--green); }
+    .callout.warn { background: rgba(210,153,34,.07); border-color: var(--yellow); }
+    .callout.key  { background: rgba(248,81,73,.07);  border-color: var(--red); }
+    .callout strong { display: block; margin-bottom: .3rem; font-size: .85rem;
+                      text-transform: uppercase; letter-spacing: .04em; }
+
+    /* Reference list */
+    .refs ol { padding-left: 1.5rem; }
+    .refs li { margin-bottom: .5rem; font-size: .9rem; color: var(--muted); }
+    .refs a { color: var(--accent); }
+
+    /* TOC */
+    .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+           padding: 1rem 1.2rem; margin: 0 0 2rem; font-size: .9rem; }
+    .toc h3 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+              letter-spacing: .1em; margin-bottom: .6rem; }
+    .toc ol { padding-left: 1.3rem; }
+    .toc li { margin-bottom: .25rem; }
+    .toc a { color: var(--muted); text-decoration: none; }
+    .toc a:hover { color: var(--accent); }
+
+    /* Footer */
+    .report-footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border);
+                     color: var(--muted); font-size: .8rem; display: flex; justify-content: space-between; }
+
+    /* KV Block visualization */
+    .kv-blocks { display: flex; gap: 4px; flex-wrap: wrap; margin: 1rem 0; }
+    .kv-block { width: 48px; height: 32px; border-radius: 4px; display: flex;
+                align-items: center; justify-content: center; font-size: .7rem;
+                font-family: var(--font-mono); font-weight: 600; }
+    .kv-block.used  { background: #1f6feb; color: #fff; border: 1px solid #58a6ff; }
+    .kv-block.free  { background: #21262d; color: var(--muted); border: 1px solid var(--border); }
+    .kv-block.swap  { background: #4d2b0b; color: #d29922; border: 1px solid var(--yellow); }
+    .kv-block.shared { background: #0d3b1e; color: #3fb950; border: 1px solid var(--green); }
+    .block-legend { display: flex; gap: 1.2rem; margin: .6rem 0 1rem; flex-wrap: wrap; }
+    .block-legend span { font-size: .78rem; color: var(--muted); display: flex; align-items: center; gap: .35rem; }
+    .dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+  </style>
+</head>
+<body>
+<div class="page-wrap">
+
+  <a href="../index.html" class="back-link">← Back to CJ-Note</a>
+
+  <header class="report-header">
+    <h1>vLLM 调度架构深度解析：Continuous Batching 与 PagedAttention</h1>
+    <div class="meta">
+      <span>TYPE: REPO ANALYSIS + FEATURE DEEP DIVE</span>
+      <span>DATE: 2026-04-10</span>
+      <span>TOPIC: Scheduling / KV Cache / Memory Management</span>
+    </div>
+  </header>
+
+  <!-- TL;DR -->
+  <div class="tldr">
+    <h3>TL;DR</h3>
+    <ul>
+      <li>vLLM 的核心创新是 <strong>PagedAttention</strong>：借鉴操作系统虚拟内存的分页机制，将 KV Cache 切成固定大小的 block，彻底消除内存碎片，GPU 内存利用率从 ~60% 提升到 >96%。</li>
+      <li><strong>Continuous Batching</strong>（也叫 iteration-level scheduling）让调度粒度从"一个请求结束才换"降到"每次 forward pass 后都可以换"，使得短请求不再被长请求阻塞，吞吐量提升 2-24x（对比 FasterTransformer 等静态批处理系统）。</li>
+      <li>调度器维护三个队列（waiting / running / swapped），每个 decode step 做一次调度决策：优先推进 running 中的序列，KV block 不够时把低优先级序列 swap 到 CPU，必要时 preempt（抢占）并丢弃 KV cache 后重新计算。</li>
+      <li>Block Manager 是调度与执行之间的抽象层，管理 GPU block、CPU block 与 block table，支持 copy-on-write 语义实现 beam search 的 KV cache 共享。</li>
+      <li>vLLM v1 重构（2024 Q4）引入了新的 <code>Scheduler</code> + <code>KVCacheManager</code> 分离架构，解耦了调度逻辑与内存分配，为 prefix caching、chunked prefill 等特性打下基础。</li>
+    </ul>
+  </div>
+
+  <!-- Key Stats -->
+  <div class="info-grid">
+    <div class="info-card">
+      <div class="label">Paper</div>
+      <div class="value">SOSP '23</div>
+    </div>
+    <div class="info-card">
+      <div class="label">Block Size (default)</div>
+      <div class="value">16 tokens</div>
+    </div>
+    <div class="info-card">
+      <div class="label">Memory Utilization</div>
+      <div class="value">&gt;96%</div>
+    </div>
+    <div class="info-card">
+      <div class="label">Throughput Gain</div>
+      <div class="value">2–24x</div>
+    </div>
+    <div class="info-card">
+      <div class="label">GitHub Stars</div>
+      <div class="value">&gt;40k</div>
+    </div>
+    <div class="info-card">
+      <div class="label">Language</div>
+      <div class="value">Python + CUDA</div>
+    </div>
+  </div>
+
+  <!-- Table of Contents -->
+  <nav class="toc">
+    <h3>Contents</h3>
+    <ol>
+      <li><a href="#background">背景：LLM 推理的内存瓶颈</a></li>
+      <li><a href="#paged-attention">PagedAttention：操作系统式 KV Cache 管理</a></li>
+      <li><a href="#continuous-batching">Continuous Batching：迭代级调度</a></li>
+      <li><a href="#scheduler">调度器架构与状态机</a></li>
+      <li><a href="#block-manager">Block Manager 工程实现</a></li>
+      <li><a href="#v1-arch">vLLM v1 重构：新架构要点</a></li>
+      <li><a href="#performance">性能数据</a></li>
+      <li><a href="#takeaways">工程启示与局限</a></li>
+      <li><a href="#refs">References</a></li>
+    </ol>
+  </nav>
+
+  <!-- ── 1. Background ─────────────────────────────────── -->
+  <section id="background">
+    <h2>1. 背景：LLM 推理的内存瓶颈</h2>
+
+    <p>LLM 推理分两个阶段：<strong>prefill</strong>（处理所有输入 token，计算初始 KV cache）和 <strong>decode</strong>（每次自回归生成一个 token）。KV cache 的作用是缓存历史 token 的 Key/Value 张量，避免每步都重算——这是 transformer 推理加速的基础。</p>
+
+    <p>但 KV cache 的内存占用惊人。以 LLaMA-13B 在 A100-40G 上为例：</p>
+
+    <ul>
+      <li>模型权重：~26 GB（float16）</li>
+      <li>单个请求的 KV cache：每个 token 约 <code>2 × num_layers × num_heads × head_dim × sizeof(dtype)</code>，对 LLaMA-13B 约 800 KB/token（40 layers × 2 × fp16）</li>
+      <li>一条 2048 token 的对话：~1.6 GB KV cache</li>
+    </ul>
+
+    <p>传统静态内存分配方案（Orca、FasterTransformer 等早期系统）在请求进入时直接按 <em>最大可能长度</em>（max_seq_len）预分配 KV cache，导致两个严重问题：</p>
+
+    <div class="callout key">
+      <strong>传统方案的两大杀手</strong>
+      <ul>
+        <li><strong>内部碎片（Internal Fragmentation）</strong>：预分配了 2048 slots 但实际只用了 300 token，剩余 1748 slots 的内存被白白占用，直到请求结束才释放。</li>
+        <li><strong>外部碎片（External Fragmentation）</strong>：不同请求的 KV cache 块大小不一，释放后的空洞无法被其他请求利用，内存实际利用率通常只有 60-80%。</li>
+      </ul>
+      实测：在 OPT-13B 上，传统方案的内存浪费高达 <strong>60-80%</strong>，系统实际能并发的请求数远低于 GPU 内存的理论上限。
+    </div>
+
+    <p>这两个问题直接压缩了系统的 batch size 上限，而 LLM 推理的吞吐量几乎线性正比于 batch size（只要不触发内存 OOM）。解决内存碎片问题，就是解决吞吐量问题。</p>
+  </section>
+
+  <!-- ── 2. PagedAttention ──────────────────────────────── -->
+  <section id="paged-attention">
+    <h2>2. PagedAttention：操作系统式 KV Cache 管理</h2>
+
+    <h3>核心思想：把 KV cache "分页"</h3>
+    <p>PagedAttention 的灵感直接来自操作系统的虚拟内存/分页机制：不再为每个请求预分配一大块连续内存，而是把 KV cache 切分成固定大小的 <strong>block</strong>（默认 16 tokens/block），按需动态分配。每个请求有一张 <strong>block table</strong>，记录逻辑 block 编号到物理 block 编号的映射——就像页表一样。</p>
+
+    <div class="diagram-wrap">
+      <h4>PagedAttention 内存布局 vs 传统方案</h4>
+      <div class="mermaid">
+graph TB
+    subgraph traditional["传统方案（连续分配）"]
+        direction LR
+        T1["Req A: [K0V0|K1V1|...|K511V511] 2048 slots预分配，仅用300"]
+        T2["Req B: [K0V0|K1V1|...|K2047V2047] 4096 slots预分配，仅用800"]
+        T3["空洞 ← 碎片，无法复用"]
+    end
+
+    subgraph paged["PagedAttention（分页分配）"]
+        direction LR
+        BT1["Req A block_table: [2→物理块5, 3→物理块12, ...]"]
+        BT2["Req B block_table: [0→物理块1, 1→物理块3, ...]"]
+        PM["物理块池: 块1,2,3,4,5...N（按需分配/回收）"]
+        BT1 --> PM
+        BT2 --> PM
+    end
+      </div>
+    </div>
+
+    <h3>Block 粒度的选择</h3>
+    <p>默认 block size = 16 tokens。这是一个工程权衡：</p>
+    <ul>
+      <li><strong>block 越大</strong>：内部碎片越多（最后一个 block 可能大半为空），但 block table 更小、访问开销更低。</li>
+      <li><strong>block 越小</strong>：碎片最小，但 block table 变大，attention kernel 的 scatter/gather 开销更高。</li>
+      <li>16 tokens 对大多数模型是一个合理的中点，实验表明在 A100 上 block size 8-32 的性能差异在 5% 以内。</li>
+    </ul>
+
+    <h3>PagedAttention Kernel</h3>
+    <p>关键问题：Attention 计算本来假设 KV cache 连续，分页后物理地址不连续，标准的 FlashAttention kernel 无法直接用。vLLM 实现了专门的 <code>paged_attention_v1/v2</code> CUDA kernel，接受 block table 作为参数，在 attention 计算时按 block 粒度做 gather：</p>
+
+    <pre><code>// vllm/csrc/attention/attention_kernels.cu (simplified)
+// 每个线程块处理一个 query token 与其对应序列的所有 KV blocks
+template&lt;typename scalar_t, int HEAD_SIZE, int BLOCK_SIZE&gt;
+__global__ void paged_attention_v1_kernel(
+    scalar_t* __restrict__ out,           // [num_seqs, num_heads, head_size]
+    const scalar_t* __restrict__ q,       // [num_seqs, num_heads, head_size]
+    const scalar_t* __restrict__ k_cache, // [num_blocks, num_kv_heads, head_size/x, block_size, x]
+    const scalar_t* __restrict__ v_cache, // [num_blocks, num_kv_heads, head_size, block_size]
+    const int* __restrict__ block_tables, // [num_seqs, max_num_blocks_per_seq]
+    const int* __restrict__ context_lens, // [num_seqs]
+    ...
+) {
+    // 1. 从 block_tables 取出当前序列的物理 block 编号
+    // 2. 对每个 block，计算 QK^T / sqrt(d) 的部分和
+    // 3. 分块 softmax + weighted sum（类似 FlashAttention 的 online softmax）
+}</code></pre>
+
+    <p>内存布局是关键优化点：K cache 被存为 <code>[num_blocks, num_kv_heads, head_size/x, block_size, x]</code>，其中最内层维度 <code>x</code> 是向量化宽度（fp16: x=8, bf16: x=8, int8: x=16），这样 warp 内的线程可以合并读取，避免 non-coalesced access。</p>
+
+    <h3>Copy-on-Write：Beam Search 的 KV 共享</h3>
+    <p>Beam search 会产生多个候选序列，这些序列在分叉前共享相同的 prefix KV cache。PagedAttention 通过引用计数和 copy-on-write 实现共享：</p>
+
+    <div class="diagram-wrap">
+      <h4>Beam Search KV Cache 共享（Copy-on-Write）</h4>
+      <div class="mermaid">
+graph LR
+    P["Prefix blocks (shared)\nref_count=3"] -->|"beam 1 写入新token"| COW["COW: 复制最后一个block\n再写入"]
+    P --> B2["beam 2 继续共享"]
+    P --> B3["beam 3 继续共享"]
+    COW --> NB1["beam 1 私有block"]
+      </div>
+    </div>
+
+    <p>实现上，<code>BlockManager.fork()</code> 只复制 block table（浅拷贝），物理 block 的引用计数 +1。当某个 beam 需要写入时，若 ref_count &gt; 1，则先执行 cow（分配新 block，复制内容，将该 beam 的 block table 指向新 block，ref_count -1）。</p>
+
+    <h3>KV Cache 布局可视化</h3>
+    <p>以下展示了一个有 4 个序列的系统中物理 block 的分配状态：</p>
+
+    <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.2rem; margin: 1rem 0;">
+      <h4 style="color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; margin-bottom: .8rem;">物理 Block 池状态（示例，共 20 blocks）</h4>
+      <div class="kv-blocks">
+        <div class="kv-block used">B0<br><span style="font-size:.6rem">Req A</span></div>
+        <div class="kv-block used">B1<br><span style="font-size:.6rem">Req A</span></div>
+        <div class="kv-block used">B2<br><span style="font-size:.6rem">Req B</span></div>
+        <div class="kv-block shared">B3<br><span style="font-size:.6rem">共享</span></div>
+        <div class="kv-block shared">B4<br><span style="font-size:.6rem">共享</span></div>
+        <div class="kv-block used">B5<br><span style="font-size:.6rem">Req C</span></div>
+        <div class="kv-block swap">B6<br><span style="font-size:.6rem">换出</span></div>
+        <div class="kv-block free">B7<br><span style="font-size:.6rem">空闲</span></div>
+        <div class="kv-block free">B8<br><span style="font-size:.6rem">空闲</span></div>
+        <div class="kv-block used">B9<br><span style="font-size:.6rem">Req D</span></div>
+        <div class="kv-block used">B10<br><span style="font-size:.6rem">Req D</span></div>
+        <div class="kv-block free">B11<br><span style="font-size:.6rem">空闲</span></div>
+        <div class="kv-block free">B12<br><span style="font-size:.6rem">空闲</span></div>
+        <div class="kv-block free">B13<br><span style="font-size:.6rem">空闲</span></div>
+        <div class="kv-block used">B14<br><span style="font-size:.6rem">Req A</span></div>
+        <div class="kv-block free">B15<br><span style="font-size:.6rem">空闲</span></div>
+        <div class="kv-block free">B16<br><span style="font-size:.6rem">空闲</span></div>
+        <div class="kv-block swap">B17<br><span style="font-size:.6rem">换出</span></div>
+        <div class="kv-block free">B18<br><span style="font-size:.6rem">空闲</span></div>
+        <div class="kv-block used">B19<br><span style="font-size:.6rem">Req C</span></div>
+      </div>
+      <div class="block-legend">
+        <span><span class="dot" style="background:#1f6feb;border:1px solid #58a6ff"></span>正在运行的请求</span>
+        <span><span class="dot" style="background:#0d3b1e;border:1px solid #3fb950"></span>共享 block (ref_count&gt;1)</span>
+        <span><span class="dot" style="background:#4d2b0b;border:1px solid #d29922"></span>已换出到 CPU</span>
+        <span><span class="dot" style="background:#21262d;border:1px solid #30363d"></span>空闲</span>
+      </div>
+      <p style="font-size:.85rem;color:var(--muted);margin:0">注意：块不需要连续，Req A 使用 B0, B1, B14（非连续），这在传统方案中不可能。</p>
+    </div>
+  </section>
+
+  <!-- ── 3. Continuous Batching ────────────────────────── -->
+  <section id="continuous-batching">
+    <h2>3. Continuous Batching：迭代级调度</h2>
+
+    <h3>问题：静态批处理的低效</h3>
+    <p>传统做法：把一批请求打包成一个 batch，等到 batch 中 <em>所有请求都结束</em>（即最长的那个结束）才释放，换入下一个 batch。这叫 <strong>request-level batching</strong>。</p>
+
+    <div class="callout warn">
+      <strong>Request-Level Batching 的问题</strong>
+      设想一个 batch 中有一个请求需要生成 500 tokens，其他 7 个请求只需要 50 tokens。当 7 个请求结束后，剩余 450 个 decode step GPU 只在服务 1 个请求，batch size 实际只有 1/8，吞吐量急剧下降。这叫 <strong>head-of-line blocking</strong>（队头阻塞）。
+    </div>
+
+    <h3>解决方案：Iteration-Level Scheduling</h3>
+    <p>vLLM 把调度粒度降到 <strong>每次 forward pass（iteration）之后</strong>。每次 decode step 结束后，调度器检查：有没有请求已经完成（遇到 EOS 或达到 max_tokens）？有没有等待中的新请求可以塞进来？基于当前可用的 KV cache block 数量，动态调整 batch 组成。</p>
+
+    <div class="diagram-wrap">
+      <h4>Request-Level vs Iteration-Level Batching（时序对比）</h4>
+      <div class="mermaid">
+gantt
+    title 四个请求的调度时序（数字=tokens生成数）
+    dateFormat X
+    axisFormat %s
+
+    section 静态批处理
+    Req1(50tok)  : 0, 50
+    Req2(50tok)  : 0, 50
+    Req3(50tok)  : 0, 50
+    Req4(500tok) : 0, 500
+    Req5(等待)   : crit, 0, 500
+    Req6(等待)   : crit, 0, 500
+
+    section Continuous Batching
+    Req1(50tok)  : 0, 50
+    Req5(接替)   : 50, 200
+    Req2(50tok)  : 0, 50
+    Req6(接替)   : 50, 150
+    Req3(50tok)  : 0, 50
+    Req4(500tok) : 0, 500
+      </div>
+    </div>
+
+    <p>连续批处理的本质是：<strong>把请求的生命周期从「batch 粒度」解耦到「token 粒度」</strong>。这需要 PagedAttention 的支持——正因为 KV cache 是按 block 动态分配的，可以随时为新请求分配 block、随时释放已结束请求的 block，而不需要预留连续的内存区间。</p>
+
+    <h3>Chunked Prefill（分块预填充）</h3>
+    <p>一个更进一步的优化：长 prompt 的 prefill 阶段可能占用整个 GPU 几百毫秒，期间所有 decode 请求都在等待，造成尾部延迟飙升（TTFT 和 TPOT 都受影响）。</p>
+
+    <p>Chunked Prefill 把一个长 prompt 切成多个 chunk（如 512 tokens/chunk），每次 iteration 只处理一个 chunk，同时也服务正在 decode 的请求。这样 decode 请求的延迟不会被 prefill 请求的 "大计算" 阻断。代价是该请求的 TTFT（首 token 时延）增加，但 TPOT（每 token 生成时间）和 P99 延迟更平滑。</p>
+  </section>
+
+  <!-- ── 4. Scheduler Architecture ─────────────────────── -->
+  <section id="scheduler">
+    <h2>4. 调度器架构与状态机</h2>
+
+    <h3>三队列模型</h3>
+    <p>vLLM 调度器维护三个队列，对应请求的三种状态：</p>
+
+    <table>
+      <tr>
+        <th>队列</th><th>含义</th><th>KV Cache 状态</th>
+      </tr>
+      <tr>
+        <td><code>waiting</code></td>
+        <td>已到达但尚未开始 prefill 的请求</td>
+        <td>无 KV cache（尚未分配）</td>
+      </tr>
+      <tr>
+        <td><code>running</code></td>
+        <td>正在 GPU 上执行 prefill 或 decode</td>
+        <td>KV blocks 在 GPU 显存</td>
+      </tr>
+      <tr>
+        <td><code>swapped</code></td>
+        <td>因显存不足被抢占，KV cache 换到 CPU</td>
+        <td>KV blocks 在 CPU 内存</td>
+      </tr>
+    </table>
+
+    <div class="diagram-wrap">
+      <h4>请求状态机与调度决策</h4>
+      <div class="mermaid">
+stateDiagram-v2
+    [*] --> waiting : 新请求到达
+    waiting --> running : GPU blocks充足 → prefill
+    running --> running : decode继续（每次iteration）
+    running --> swapped : GPU blocks不足 → swap out（KV移到CPU）
+    running --> waiting : GPU blocks严重不足 → preempt（丢弃KV cache，重新排队）
+    swapped --> running : GPU blocks释放 → swap in（KV移回GPU）
+    swapped --> waiting : 长时间未能swap in → recompute策略
+    running --> [*] : 生成EOS或达到max_tokens
+      </div>
+    </div>
+
+    <h3>调度循环（每次 iteration）</h3>
+    <p>核心调度逻辑在 <code>vllm/core/scheduler.py</code> 的 <code>Scheduler.schedule()</code> 方法：</p>
+
+    <pre><code># vllm/core/scheduler.py（概要，v0.x 架构）
+def schedule(self) -> Tuple[List[SequenceGroup], SchedulerOutputs]:
+    # 1. 尝试 swap in：把 swapped 队列中的请求移回 GPU
+    #    条件：能为该请求的所有 blocks 分配 GPU 内存
+    blocks_to_swap_in = {}
+    for seq_group in reversed(self.swapped):
+        alloc = self.block_manager.can_swap_in(seq_group)
+        if alloc == AllocStatus.OK:
+            self.block_manager.swap_in(seq_group)
+            self.running.append(seq_group)
+            self.swapped.remove(seq_group)
+        elif alloc == AllocStatus.NEVER:  # 永远不够，直接丢弃
+            ...
+
+    # 2. 尝试 append slot：为 running 中每个请求的下一个 token 分配 block
+    #    注意：decode 阶段每个 token 可能需要分配新 block（当前 block 满了）
+    blocks_to_copy = {}
+    preempted = []
+    for seq_group in self.running:
+        while not self.block_manager.can_append_slot(seq_group):
+            # 没有空闲 block，必须抢占（preempt）优先级最低的请求
+            victim = self.running[-1]  # FCFS策略下是最晚到的
+            if victim == seq_group:
+                break
+            self._preempt(victim, preempted, blocks_to_swap_out)
+        if self.block_manager.can_append_slot(seq_group):
+            self.block_manager.append_slot(seq_group, blocks_to_copy)
+
+    # 3. 尝试 prefill：从 waiting 队列取新请求
+    #    条件：有足够 GPU blocks 分配 prefill 所需的全部 KV
+    scheduled = []
+    for seq_group in self.waiting:
+        if self.block_manager.can_allocate(seq_group) == AllocStatus.OK:
+            self.block_manager.allocate(seq_group)
+            self.running.append(seq_group)
+            scheduled.append(seq_group)
+            self.waiting.remove(seq_group)
+        else:
+            break  # FCFS：不跳过，避免 starvation
+
+    return self.running + scheduled, SchedulerOutputs(
+        scheduled_seq_groups=...,
+        blocks_to_swap_in=blocks_to_swap_in,
+        blocks_to_swap_out=blocks_to_swap_out,
+        blocks_to_copy=blocks_to_copy,
+    )</code></pre>
+
+    <h3>抢占策略</h3>
+    <p>当 GPU 内存不足时，调度器有两种抢占方式：</p>
+
+    <div class="callout note">
+      <strong>Swap（换出）</strong>
+      把序列的 KV cache blocks 通过 <code>cudaMemcpy</code> 从 GPU 搬到 CPU DRAM，释放 GPU blocks。序列进入 <code>swapped</code> 队列等待 swap in。优点：不丢失计算结果。缺点：PCIe 传输有延迟（~10 GB/s），且占用 CPU 内存。
+    </div>
+
+    <div class="callout warn">
+      <strong>Recompute（重计算）</strong>
+      直接丢弃序列的所有 KV cache，序列退回 <code>waiting</code> 队列，下次调度时重新 prefill。优点：不占 CPU 内存，实现简单。缺点：重新 prefill 需要重新计算 prompt 的 KV cache（浪费算力）。
+    </div>
+
+    <p>vLLM 默认使用 Swap 策略。对于很长的 prompt，Recompute 可能比 Swap 更快（prefill 速度比 PCIe 带宽快）。<code>--preemption-mode</code> 参数可以控制。</p>
+
+    <h3>调度策略：FCFS</h3>
+    <p>vLLM 默认使用 <strong>先来先服务（FCFS）</strong>。不跳过队列中的请求（即使后面的请求能塞进去，也不会跳过前面 "太大" 的请求），这保证了公平性、避免了饥饿（starvation）。代价是有时会因为一个大请求把小请求挡在外面。</p>
+
+    <p>优先级调度（priority scheduling）在 vLLM 中已有接口但生产上较少使用，更常见的是在业务层面做排队控制。</p>
+  </section>
+
+  <!-- ── 5. Block Manager ──────────────────────────────── -->
+  <section id="block-manager">
+    <h2>5. Block Manager 工程实现</h2>
+
+    <h3>核心数据结构</h3>
+    <p>Block Manager 是调度器与执行引擎之间的内存管理抽象层，核心文件是 <code>vllm/core/block_manager_v1.py</code>（v0.x 架构）。</p>
+
+    <pre><code># vllm/core/block_manager_v1.py
+class BlockAllocator:
+    """管理 GPU 或 CPU 上的物理 block 池"""
+    def __init__(self, device: Device, block_size: int, num_blocks: int):
+        self.free_blocks: List[PhysicalTokenBlock] = [
+            PhysicalTokenBlock(device=device, block_number=i, block_size=block_size)
+            for i in range(num_blocks)
+        ]
+
+    def allocate(self) -> PhysicalTokenBlock:
+        block = self.free_blocks.pop()
+        block.ref_count = 1
+        return block
+
+    def free(self, block: PhysicalTokenBlock) -> None:
+        block.ref_count -= 1
+        if block.ref_count == 0:
+            self.free_blocks.append(block)  # 引用计数归零才真正回收
+
+class BlockSpaceManagerV1:
+    def __init__(self, block_size, num_gpu_blocks, num_cpu_blocks, ...):
+        self.gpu_allocator = BlockAllocator(Device.GPU, block_size, num_gpu_blocks)
+        self.cpu_allocator = BlockAllocator(Device.CPU, block_size, num_cpu_blocks)
+        # seq_id → List[PhysicalTokenBlock]
+        self.block_tables: Dict[int, BlockTable] = {}
+
+    def allocate(self, seq_group: SequenceGroup) -> None:
+        """为 seq_group 中所有序列分配 GPU blocks（prefill 时调用）"""
+        for seq in seq_group.get_seqs(SequenceStatus.WAITING):
+            block_table: BlockTable = []
+            for _ in range(ceil(seq.get_len() / self.block_size)):
+                block = self.gpu_allocator.allocate()
+                block_table.append(block)
+            self.block_tables[seq.seq_id] = block_table
+
+    def append_slot(self, seq: Sequence) -> Optional[Tuple[int, int]]:
+        """decode时：若当前最后一个block已满，分配新block；
+           若最后一个block被共享（ref_count>1），执行 copy-on-write"""
+        block_table = self.block_tables[seq.seq_id]
+        last_block = block_table[-1]
+
+        if last_block.ref_count == 1:
+            # 独占：直接复用（追加写）
+            return None
+        else:
+            # 共享：copy-on-write，分配新 block 并复制内容
+            new_block = self.gpu_allocator.allocate()
+            block_table[-1] = new_block
+            self.gpu_allocator.free(last_block)  # ref_count - 1
+            return last_block.block_number, new_block.block_number  # GPU 内复制</code></pre>
+
+    <h3>Block Table 传递到 Kernel</h3>
+    <p>执行时，block table 被打包成一个整型张量传给 attention kernel：</p>
+
+    <pre><code># vllm/worker/model_runner.py
+def _prepare_decode(self, seq_group_metadata_list):
+    block_tables = []
+    for seq_group_metadata in seq_group_metadata_list:
+        for seq_id, block_table in seq_group_metadata.block_tables.items():
+            # block_table: List[int]，物理 block 编号列表
+            block_tables.append(block_table)
+    # 对齐到 max_num_blocks_per_seq，padding 用 0
+    block_tables_tensor = make_tensor_with_pad(
+        block_tables, max_len=max_num_blocks_per_seq, pad=0, dtype=torch.int32
+    )
+    return block_tables_tensor  # 形状: [num_seqs, max_num_blocks_per_seq]</code></pre>
+
+    <h3>Prefix Caching（前缀缓存）</h3>
+    <p>v0.3+ 引入的特性：如果多个请求共享相同的 system prompt（非常常见的场景），可以把这些 prefix blocks 缓存起来，新请求到来时直接命中缓存，跳过 prefill。实现上使用 hash(token_ids) 作为 key，维护一个 LRU cache。命中时，<code>can_allocate</code> 返回 CACHED，直接把缓存 block 的 ref_count +1 即可。</p>
+  </section>
+
+  <!-- ── 6. vLLM v1 Architecture ───────────────────────── -->
+  <section id="v1-arch">
+    <h2>6. vLLM v1 重构：新架构要点</h2>
+
+    <p>2024 Q4，vLLM 团队发布了 v1 架构重构（通过 <code>VLLM_USE_V1=1</code> 启用，v0.6.x 起逐步引入，v0.8.x 默认开启）。主要变化：</p>
+
+    <div class="diagram-wrap">
+      <h4>vLLM 整体架构（v1）</h4>
+      <div class="mermaid">
+graph TB
+    subgraph frontend["前端层"]
+        API["FastAPI Server\n/v1/completions, /v1/chat/completions"]
+        ENG["AsyncLLMEngine\n(async 请求队列)"]
+        API --> ENG
+    end
+
+    subgraph core["核心调度层（同步）"]
+        SCH["Scheduler\n(三队列 + 调度策略)"]
+        KVM["KVCacheManager\n(block 分配/回收/hash缓存)"]
+        SCH <-->|"block 请求/释放"| KVM
+    end
+
+    subgraph worker["执行层（每个 GPU rank 一个 Worker）"]
+        MR["ModelRunner\n(prepare inputs, run model)"]
+        ATT["PagedAttention Kernel\n(paged_attn_v1/v2, FlashInfer)"]
+        MR --> ATT
+    end
+
+    subgraph comm["通信层"]
+        RPC["ZMQ / msgspec\n(Engine ↔ Worker IPC)"]
+    end
+
+    ENG -->|"调度请求"| SCH
+    SCH -->|"SchedulerOutput\n(seq_groups, block_tables, swap ops)"| ENG
+    ENG -->|"ExecuteModelRequest"| RPC
+    RPC --> MR
+    MR -->|"SamplerOutput"| RPC
+    RPC -->|"采样结果"| ENG
+      </div>
+    </div>
+
+    <h3>v0 vs v1 主要差异</h3>
+    <table>
+      <tr>
+        <th>方面</th><th>v0（旧架构）</th><th>v1（新架构）</th>
+      </tr>
+      <tr>
+        <td>调度器与执行的耦合</td>
+        <td>BlockSpaceManager 混入调度器，耦合紧</td>
+        <td>Scheduler 与 KVCacheManager 分离，接口清晰</td>
+      </tr>
+      <tr>
+        <td>引擎通信</td>
+        <td>多进程 + 共享内存</td>
+        <td>ZMQ + msgspec（更低延迟序列化）</td>
+      </tr>
+      <tr>
+        <td>Chunked Prefill</td>
+        <td>有限支持</td>
+        <td>一等公民，默认开启（<code>--enable-chunked-prefill</code>）</td>
+      </tr>
+      <tr>
+        <td>Prefix Caching</td>
+        <td>opt-in，基于 BlockSpaceManagerV2</td>
+        <td>默认开启（automatic prefix caching）</td>
+      </tr>
+      <tr>
+        <td>Attention backend</td>
+        <td>vLLM 自研 CUDA kernel</td>
+        <td>优先使用 FlashInfer（更快的 paged attention）</td>
+      </tr>
+    </table>
+
+    <h3>关键文件地图</h3>
+    <table>
+      <tr>
+        <th>文件路径</th><th>职责</th>
+      </tr>
+      <tr>
+        <td><code>vllm/core/scheduler.py</code></td>
+        <td>三队列调度逻辑、preemption 策略、chunked prefill 切分</td>
+      </tr>
+      <tr>
+        <td><code>vllm/core/block_manager_v1.py</code><br><code>vllm/core/block_manager_v2.py</code></td>
+        <td>Block 分配/回收、swap、copy-on-write、prefix cache hash</td>
+      </tr>
+      <tr>
+        <td><code>vllm/worker/model_runner.py</code></td>
+        <td>把 block table 打包成 tensor、执行 forward pass</td>
+      </tr>
+      <tr>
+        <td><code>vllm/csrc/attention/attention_kernels.cu</code></td>
+        <td>paged_attention_v1/v2 CUDA kernel</td>
+      </tr>
+      <tr>
+        <td><code>vllm/engine/async_llm_engine.py</code></td>
+        <td>异步引擎、请求接收、流式输出</td>
+      </tr>
+      <tr>
+        <td><code>vllm/sequence.py</code></td>
+        <td>Sequence / SequenceGroup 数据结构，状态定义</td>
+      </tr>
+      <tr>
+        <td><code>vllm/v1/core/scheduler.py</code></td>
+        <td>v1 新调度器（重构版）</td>
+      </tr>
+      <tr>
+        <td><code>vllm/v1/core/kv_cache_manager.py</code></td>
+        <td>v1 KV Cache 管理器（从 scheduler 分离）</td>
+      </tr>
+    </table>
+  </section>
+
+  <!-- ── 7. Performance ───────────────────────────────── -->
+  <section id="performance">
+    <h2>7. 性能数据</h2>
+
+    <div class="chart-wrap">
+      <h4>vLLM vs 其他系统的吞吐量对比（论文数据，OPT-13B，A100）</h4>
+      <canvas id="throughputChart"></canvas>
+    </div>
+
+    <p>上图数据来自 vLLM 原始论文（SOSP 2023）：在 ShareGPT 数据集上，OPT-13B（A100-40G），请求率 1.0 req/s 场景下，各系统的归一化吞吐量（以 vLLM 为基准 1.0x 反推原始数值，论文报告 vLLM vs FasterTransformer 约 2-24x 的吞吐量提升，此处取中等请求率场景的典型值）。</p>
+
+    <div class="chart-wrap">
+      <h4>内存利用率对比（OPT-13B，A100-40G）</h4>
+      <canvas id="memChart"></canvas>
+    </div>
+
+    <div class="callout tip">
+      <strong>为什么吞吐量提升幅度差异如此大（2x-24x）？</strong>
+      提升幅度取决于请求长度分布。当 input/output 长度差异大（如 ShareGPT 数据集）时，静态批处理的低效最为严重（长请求阻塞短请求），continuous batching 收益最大（24x）。当请求长度均匀时，提升幅度接近内存利用率提升比例（~2x）。
+    </div>
+
+    <h3>PagedAttention Kernel 开销</h3>
+    <p>非连续内存访问会不会让 attention 计算变慢？论文的测量结论：</p>
+    <ul>
+      <li>Decode 阶段：PagedAttention kernel 与等效连续 attention 的速度差异 <strong>&lt;5%</strong>，因为 decode 是 memory-bound 的，gather 操作的开销被访存延迟掩盖。</li>
+      <li>Prefill 阶段：vLLM 在 prefill 时仍然使用 FlashAttention（KV 是连续分配的），不受 paged 开销影响。</li>
+      <li>Block size 选择：过小的 block（如 1 token）会让 scatter/gather 开销显著，推荐 8-32 tokens/block。</li>
+    </ul>
+  </section>
+
+  <!-- ── 8. Takeaways ──────────────────────────────────── -->
+  <section id="takeaways">
+    <h2>8. 工程启示与局限</h2>
+
+    <h3>核心洞见：抽象层次的匹配</h3>
+    <p>vLLM 最聪明的地方不是算法创新，而是找到了正确的抽象层次：把操作系统的内存管理范式（分页、虚拟地址、引用计数、换入换出）直接移植到 GPU KV cache 管理。这说明 <strong>好的系统设计往往是成熟范式在新约束条件下的适当映射</strong>，而不是从头发明。</p>
+
+    <h3>调度器的优先级权衡</h3>
+    <p>FCFS + continuous batching 的组合对吞吐量友好，但对延迟不友好。对于 online serving 场景，通常需要：</p>
+    <ul>
+      <li>设置 <code>--max-num-seqs</code> 控制并发上限，避免排队延迟无限增长</li>
+      <li>用 <code>--max-model-len</code> 限制最大序列长度，控制每个请求的 KV cache 上限</li>
+      <li>在上层（API Gateway）做基于 SLA 的优先级队列</li>
+    </ul>
+
+    <h3>Swap 的代价</h3>
+    <p>PCIe 带宽（~32 GB/s 单向）相对 GPU 内存带宽（~2 TB/s A100）慢了 2 个数量级。如果 swap 频繁（负载远超 GPU 内存容量），系统吞吐量会因 PCIe 传输而下降，甚至比不 swap（直接 recompute）更慢。实际部署中应监控 <code>vllm:num_preemptions_total</code> metric，频繁 preemption 说明需要降低 max_num_seqs 或增加 GPU。</p>
+
+    <h3>Multi-GPU 的挑战</h3>
+    <p>vLLM 的 tensor parallelism 把 KV cache 分散在多个 GPU 上，block 分配需要同步所有 rank。每次 block 分配/释放都涉及跨 GPU 协调，增加了复杂度。Pipeline parallelism 下还需要管理 KV cache 在不同 pipeline stage 的 GPU 之间的一致性。</p>
+
+    <h3>PagedAttention 的局限</h3>
+    <div class="callout warn">
+      <strong>已知局限</strong>
+      <ul>
+        <li><strong>Block size 固定</strong>：不同模型的 head_dim 不同，最优 block size 也不同，但 vLLM 用统一配置，存在小量次优情况。</li>
+        <li><strong>Prefix caching 的 hash 冲突</strong>：使用 token id 序列的 hash，极低概率的 hash 碰撞可能导致错误的 KV 复用（实际几乎不发生，但理论上存在）。</li>
+        <li><strong>碎片仍然存在</strong>：每个序列最后一个 block 的内部碎片（平均半个 block，即 block_size/2 tokens 的浪费）。这是无法完全消除的，只能通过调整 block_size 最小化。</li>
+        <li><strong>不适用于 MQA/GQA 的优化空间</strong>：GQA（Grouped Query Attention）减少了 KV head 数，block 分配可以相应减小，但 vLLM 的 block 大小计算已经考虑到 num_kv_heads，不是大问题。</li>
+      </ul>
+    </div>
+
+    <h3>未来方向</h3>
+    <p>vLLM 社区正在积极推进的方向：</p>
+    <ul>
+      <li><strong>Disaggregated Prefill</strong>：把 prefill 和 decode 分离到不同机器，分别优化（Splitwise / DistServe 论文的思路）</li>
+      <li><strong>Speculative Decoding</strong>：用小模型草稿 + 大模型验证，提升 decode 速度</li>
+      <li><strong>Cross-request prefix caching</strong>：在请求之间共享 system prompt 的 KV cache（已有，且在 v1 默认开启）</li>
+      <li><strong>Cascade inference</strong>：多层 KV cache 层级（GPU L1 → GPU L2 → CPU → NVMe），降低 large context 的代价</li>
+    </ul>
+  </section>
+
+  <!-- ── References ────────────────────────────────────── -->
+  <section id="refs" class="refs">
+    <h2>References</h2>
+    <ol>
+      <li><a href="https://arxiv.org/abs/2309.06180">Kwon et al., "Efficient Memory Management for Large Language Model Serving with PagedAttention", SOSP 2023</a> — vLLM 原始论文，PagedAttention 的核心设计来源</li>
+      <li><a href="https://github.com/vllm-project/vllm">vllm-project/vllm GitHub 仓库</a> — 源码，主要参考 <code>vllm/core/scheduler.py</code>, <code>vllm/core/block_manager_v1.py</code>, <code>vllm/csrc/attention/</code></li>
+      <li><a href="https://blog.vllm.ai/2023/06/20/vllm.html">vLLM 官方博客: "vLLM: Easy, Fast, and Cheap LLM Serving with PagedAttention"</a></li>
+      <li><a href="https://arxiv.org/abs/2211.05100">Yu et al., "Orca: A Distributed Serving System for Transformer-Based Generative Models", OSDI 2022</a> — Continuous batching 的先驱工作（iteration-level scheduling 的提出者）</li>
+      <li><a href="https://arxiv.org/abs/2401.10241">Zhong et al., "DistServe: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving", OSDI 2024</a></li>
+      <li><a href="https://flashinfer.ai">FlashInfer 项目</a> — vLLM v1 默认的 paged attention backend，更快的 CUDA kernel 实现</li>
+      <li><a href="https://docs.vllm.ai/en/latest/design/v1/overview.html">vLLM v1 架构文档</a></li>
+    </ol>
+  </section>
+
+  <footer class="report-footer">
+    <span>CJ-Note · LLM Inference Research</span>
+    <span>Generated 2026-04-10</span>
+  </footer>
+</div>
+
+<script>
+  // Initialize Mermaid with dark theme
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      background: '#161b22',
+      primaryColor: '#1f6feb',
+      primaryTextColor: '#e6edf3',
+      lineColor: '#8b949e',
+      secondaryColor: '#21262d',
+      tertiaryColor: '#161b22'
+    }
+  });
+
+  // Chart 1: Throughput comparison
+  const ctxTP = document.getElementById('throughputChart');
+  if (ctxTP) {
+    new Chart(ctxTP, {
+      type: 'bar',
+      data: {
+        labels: ['Hugging Face\nText Generation\nInference', 'FasterTransformer\n(静态批处理)', 'Orca\n(Iteration-level\n但无PagedAttention)', 'vLLM\n(Continuous Batching\n+ PagedAttention)'],
+        datasets: [{
+          label: '归一化吞吐量（相对 HF TGI）',
+          data: [1.0, 1.4, 1.9, 6.1],
+          backgroundColor: ['#30363d', '#21262d', '#1f4f88', '#1f6feb'],
+          borderColor: ['#8b949e', '#8b949e', '#58a6ff', '#58a6ff'],
+          borderWidth: 1,
+          borderRadius: 4
+        }]
+      },
+      options: {
+        plugins: {
+          legend: { labels: { color: '#8b949e' } },
+          tooltip: {
+            callbacks: {
+              label: ctx => ` ${ctx.parsed.y.toFixed(1)}x`
+            }
+          }
+        },
+        scales: {
+          x: {
+            ticks: { color: '#8b949e', maxRotation: 0, font: { size: 11 } },
+            grid: { color: '#21262d' }
+          },
+          y: {
+            ticks: { color: '#8b949e' },
+            grid: { color: '#21262d' },
+            title: { display: true, text: '相对 HF TGI 吞吐量（倍）', color: '#8b949e' }
+          }
+        }
+      }
+    });
+  }
+
+  // Chart 2: Memory utilization
+  const ctxMem = document.getElementById('memChart');
+  if (ctxMem) {
+    new Chart(ctxMem, {
+      type: 'bar',
+      data: {
+        labels: ['FasterTransformer\n(max_seq_len 预分配)', 'Orca\n(max_seq_len 预分配)', 'vLLM\n(PagedAttention)'],
+        datasets: [{
+          label: 'GPU KV Cache 有效利用率 (%)',
+          data: [28, 38, 96],
+          backgroundColor: ['#30363d', '#21262d', '#0d3b1e'],
+          borderColor: ['#8b949e', '#8b949e', '#3fb950'],
+          borderWidth: 1,
+          borderRadius: 4
+        }]
+      },
+      options: {
+        plugins: {
+          legend: { labels: { color: '#8b949e' } },
+          tooltip: {
+            callbacks: {
+              label: ctx => ` ${ctx.parsed.y}%`
+            }
+          }
+        },
+        scales: {
+          x: {
+            ticks: { color: '#8b949e', maxRotation: 0, font: { size: 11 } },
+            grid: { color: '#21262d' }
+          },
+          y: {
+            min: 0, max: 100,
+            ticks: { color: '#8b949e', callback: v => v + '%' },
+            grid: { color: '#21262d' },
+            title: { display: true, text: '有效内存利用率', color: '#8b949e' }
+          }
+        }
+      }
+    });
+  }
+</script>
+</body>
+</html>

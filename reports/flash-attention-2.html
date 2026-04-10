@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flash Attention 2 论文研读 — CJ-Note</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #0d1117; --surface: #161b22; --border: #30363d;
+      --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+      --green: #3fb950; --yellow: #d29922; --red: #f85149;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font-sans);
+           line-height: 1.7; padding: 0 1rem; }
+    .page-wrap { max-width: 900px; margin: 0 auto; padding: 2rem 0 4rem; }
+
+    /* Header */
+    .report-header { border-bottom: 1px solid var(--border); padding-bottom: 1.5rem; margin-bottom: 2rem; }
+    .report-header h1 { font-size: 1.9rem; color: var(--accent); margin-bottom: .5rem; }
+    .meta { color: var(--muted); font-size: .85rem; display: flex; gap: 1.5rem; flex-wrap: wrap; }
+    .meta span::before { content: "• "; }
+    .meta span:first-child::before { content: ""; }
+    .back-link { display: inline-block; margin-bottom: 1rem; color: var(--muted);
+                 text-decoration: none; font-size: .85rem; }
+    .back-link:hover { color: var(--accent); }
+
+    /* Sections */
+    h2 { font-size: 1.3rem; color: var(--text); margin: 2.5rem 0 .8rem;
+         padding-bottom: .4rem; border-bottom: 1px solid var(--border); }
+    h3 { font-size: 1.05rem; color: var(--accent); margin: 1.5rem 0 .5rem; }
+    h4 { font-size: .95rem; color: var(--muted); margin: 1rem 0 .3rem; text-transform: uppercase;
+         letter-spacing: .05em; }
+    p { margin-bottom: 1rem; color: var(--text); }
+    ul, ol { padding-left: 1.5rem; margin-bottom: 1rem; }
+    li { margin-bottom: .4rem; }
+
+    /* TL;DR box */
+    .tldr { background: var(--surface); border: 1px solid var(--accent);
+            border-left: 4px solid var(--accent); border-radius: 6px;
+            padding: 1rem 1.2rem; margin: 1.5rem 0; }
+    .tldr h3 { color: var(--accent); margin: 0 0 .5rem; font-size: .9rem;
+               text-transform: uppercase; letter-spacing: .1em; }
+    .tldr ul { padding-left: 1.2rem; }
+    .tldr li { margin-bottom: .3rem; }
+
+    /* Key-value info grid */
+    .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                 gap: .75rem; margin: 1rem 0 1.5rem; }
+    .info-card { background: var(--surface); border: 1px solid var(--border);
+                 border-radius: 6px; padding: .8rem 1rem; }
+    .info-card .label { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em;
+                        color: var(--muted); margin-bottom: .3rem; }
+    .info-card .value { font-size: 1.1rem; font-weight: 600; color: var(--accent);
+                        font-family: var(--font-mono); }
+    .info-card .value.small { font-size: .85rem; }
+
+    /* Code blocks */
+    pre { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+          padding: 1rem 1.2rem; overflow-x: auto; margin: 1rem 0; font-size: .85rem;
+          font-family: var(--font-mono); line-height: 1.5; }
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 3px;
+           padding: .15em .4em; font-size: .85em; font-family: var(--font-mono); }
+    pre code { background: none; border: none; padding: 0; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .9rem; }
+    th { background: var(--surface); color: var(--muted); font-weight: 600; text-align: left;
+         padding: .6rem .8rem; border: 1px solid var(--border); font-size: .8rem;
+         text-transform: uppercase; letter-spacing: .04em; }
+    td { padding: .6rem .8rem; border: 1px solid var(--border); vertical-align: top; }
+    tr:nth-child(even) td { background: rgba(255,255,255,.02); }
+
+    /* Chart containers */
+    .chart-wrap { background: var(--surface); border: 1px solid var(--border);
+                  border-radius: 8px; padding: 1.2rem; margin: 1.2rem 0; }
+    .chart-wrap h4 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+                     letter-spacing: .05em; margin-bottom: .8rem; }
+    .chart-wrap canvas { max-height: 320px; }
+
+    /* Mermaid diagrams */
+    .diagram-wrap { background: var(--surface); border: 1px solid var(--border);
+                    border-radius: 8px; padding: 1.5rem; margin: 1.2rem 0;
+                    overflow-x: auto; text-align: center; }
+    .diagram-wrap h4 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+                       letter-spacing: .05em; margin-bottom: 1rem; text-align: left; }
+
+    /* Callout boxes */
+    .callout { border-radius: 6px; padding: .8rem 1rem; margin: 1rem 0;
+               border-left: 4px solid; }
+    .callout.note { background: rgba(88,166,255,.07); border-color: var(--accent); }
+    .callout.tip  { background: rgba(63,185,80,.07);  border-color: var(--green); }
+    .callout.warn { background: rgba(210,153,34,.07); border-color: var(--yellow); }
+    .callout.key  { background: rgba(248,81,73,.07);  border-color: var(--red); }
+    .callout strong { display: block; margin-bottom: .3rem; font-size: .85rem;
+                      text-transform: uppercase; letter-spacing: .04em; }
+
+    /* Reference list */
+    .refs ol { padding-left: 1.5rem; }
+    .refs li { margin-bottom: .5rem; font-size: .9rem; color: var(--muted); }
+    .refs a { color: var(--accent); }
+
+    /* TOC */
+    .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+           padding: 1rem 1.2rem; margin: 0 0 2rem; font-size: .9rem; }
+    .toc h3 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+              letter-spacing: .1em; margin-bottom: .6rem; }
+    .toc ol { padding-left: 1.3rem; }
+    .toc li { margin-bottom: .25rem; }
+    .toc a { color: var(--muted); text-decoration: none; }
+    .toc a:hover { color: var(--accent); }
+
+    /* Footer */
+    .report-footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border);
+                     color: var(--muted); font-size: .8rem; display: flex; justify-content: space-between; }
+
+    /* Two-column compare */
+    .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; }
+    .compare-grid .box { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; }
+    .compare-grid .box h4 { margin-bottom: .6rem; }
+    .compare-grid .box.old { border-top: 3px solid var(--red); }
+    .compare-grid .box.new { border-top: 3px solid var(--green); }
+    @media (max-width: 600px) { .compare-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<div class="page-wrap">
+
+  <a href="../index.html" class="back-link">← Back to CJ-Note</a>
+
+  <header class="report-header">
+    <h1>Flash Attention 2 论文研读</h1>
+    <div class="meta">
+      <span>TYPE: PAPER READING</span>
+      <span>DATE: 2026-04-10</span>
+      <span>TOPIC: Attention Kernel / GPU Parallelism</span>
+    </div>
+  </header>
+
+  <!-- TL;DR -->
+  <div class="tldr">
+    <h3>TL;DR</h3>
+    <ul>
+      <li>FA2 通过减少非 matmul 运算量、提升 GPU 线程利用率，在 A100 上实现了约 <strong>2x</strong> 的相对加速（相比 FA1），达到理论 FLOPS 利用率的 72%。</li>
+      <li>核心算法改变：将序列维度也作为并行维度，每个 thread block 负责独立的 Query 分块，彻底消除了 FA1 中跨 warp 的 softmax 归一化通信开销。</li>
+      <li>工作划分从"列优先"改为"行优先"——外循环遍历 Q 分块，内循环遍历 K/V 分块，使每个 warp 可以独立完成归一化，无需 warp 间同步。</li>
+      <li>专门针对 causal masking 做了 skipping 优化：整块不在对角线附近的 K/V 分块直接跳过，减少约 50% 的 causal attention 计算量。</li>
+      <li>原生支持 Multi-Query Attention (MQA) 和 Grouped-Query Attention (GQA)，以及头维度最大 256 的更宽 head dim。</li>
+    </ul>
+  </div>
+
+  <!-- Paper Info Grid -->
+  <div class="info-grid">
+    <div class="info-card">
+      <div class="label">论文标题</div>
+      <div class="value small">FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning</div>
+    </div>
+    <div class="info-card">
+      <div class="label">作者</div>
+      <div class="value small">Tri Dao (Princeton / Together AI)</div>
+    </div>
+    <div class="info-card">
+      <div class="label">发布时间</div>
+      <div class="value">2023-07</div>
+    </div>
+    <div class="info-card">
+      <div class="label">arXiv</div>
+      <div class="value small">2307.08691</div>
+    </div>
+    <div class="info-card">
+      <div class="label">目标硬件</div>
+      <div class="value small">A100 80GB SXM / H100</div>
+    </div>
+    <div class="info-card">
+      <div class="label">最高 FLOPs 利用率</div>
+      <div class="value">~72%</div>
+    </div>
+  </div>
+
+  <!-- Table of Contents -->
+  <nav class="toc">
+    <h3>Contents</h3>
+    <ol>
+      <li><a href="#background">背景：为什么还需要 Flash Attention 2</a></li>
+      <li><a href="#fa1-review">Flash Attention 1 回顾与局限</a></li>
+      <li><a href="#fa2-algo">FA2 核心算法改进</a></li>
+      <li><a href="#parallelism">GPU 并行性提升</a></li>
+      <li><a href="#implementation">工程实现关键细节</a></li>
+      <li><a href="#performance">性能对比</a></li>
+      <li><a href="#limitations">局限与后续工作</a></li>
+      <li><a href="#takeaways">Takeaways</a></li>
+      <li><a href="#refs">References</a></li>
+    </ol>
+  </nav>
+
+  <!-- ── 1. Background ──────────────────────────── -->
+  <section id="background">
+    <h2>1. 背景：为什么还需要 Flash Attention 2</h2>
+
+    <p>Transformer 的 Self-Attention 计算复杂度是序列长度 <code>N</code> 的 <code>O(N²)</code>，其中最大瓶颈是将 <code>N×N</code> 大小的注意力矩阵读写到 GPU HBM（高带宽显存）。Flash Attention 1（2022年，Dao et al., NeurIPS 2022）通过 <strong>Tiling</strong> 技术将整个 softmax + matmul 融合成单个 CUDA kernel，将注意力矩阵访问限制在 SRAM 内，从而大幅减少 HBM 读写，降低内存占用从 <code>O(N²)</code> 到 <code>O(N)</code>。</p>
+
+    <p>FA1 已经相比标准实现快 2-4x，但实际测量发现：在 A100 GPU 上，FA1 只能达到理论 FLOPS 利用率的约 <strong>30-35%</strong>，而理论上 GPU 的 matmul 效率可以做到 70%+ 。原因在于 FA1 有多处非 matmul 计算开销和不合理的线程工作划分，这就是 FA2 要解决的问题。</p>
+
+    <div class="callout note">
+      <strong>核心矛盾</strong>
+      现代 GPU（如 A100）的 Tensor Core FP16 matmul 吞吐量极高（312 TFLOPS），但 CUDA Core 的标量/向量运算速度慢得多（约 20 TFLOPS）。任何注意力实现中的非 matmul 运算（rescaling、softmax 指数等）都是严重的性能瓶颈，必须被极度压缩。
+    </div>
+  </section>
+
+  <!-- ── 2. FA1 Review ──────────────────────────── -->
+  <section id="fa1-review">
+    <h2>2. Flash Attention 1 回顾与局限</h2>
+
+    <h3>FA1 的核心思路</h3>
+    <p>FA1 的算法框架：将 Q、K、V 分成大小为 <code>B_r × d</code> 和 <code>B_c × d</code> 的块（block），分别放入 SRAM。对每个 Q 块，遍历所有 K/V 块，在 SRAM 内计算局部 softmax，使用 online softmax trick 动态更新归一化因子 <code>m</code>（行最大值）和 <code>l</code>（行 exp sum），最终得到正确输出——无需将完整 <code>N×N</code> 矩阵写回 HBM。</p>
+
+    <div class="callout warn">
+      <strong>FA1 的三个关键局限</strong>
+      <ol style="margin-top:.5rem">
+        <li><strong>大量非 matmul 运算</strong>：FA1 在每个 K/V 块迭代时需要频繁 rescale 中间输出，这些 rescale 操作是逐元素的标量乘法，由 CUDA Core 完成，拖慢整体吞吐。</li>
+        <li><strong>线程块工作划分低效</strong>：FA1 以 batch × heads 作为并行维度，每个 thread block 处理一个 head。当 batch size 小、head 数量不多时（如推理阶段），这会导致 GPU SM 利用率不足。</li>
+        <li><strong>Warp 间通信开销</strong>：FA1 在每个 thread block 内，不同 warp 处理 Q 矩阵的不同列（K 维度），但 softmax 归一化需要对整行求和，导致 warp 间需要通过 shared memory 进行归约通信（all-reduce），产生同步开销。</li>
+      </ol>
+    </div>
+
+    <div class="diagram-wrap">
+      <h4>FA1 Warp 工作划分（按 K 维度切分，行归约有同步开销）</h4>
+      <div class="mermaid">
+graph TB
+    subgraph ThreadBlock["Thread Block (处理一个 Q 行)"]
+        direction LR
+        W0["Warp 0\nK列 0-31"]
+        W1["Warp 1\nK列 32-63"]
+        W2["Warp 2\nK列 64-95"]
+        W3["Warp 3\nK列 96-127"]
+        SYNC["⚡ Shared Memory\nAll-Reduce\n(同步)"]
+        OUT["输出归一化\n结果"]
+        W0 --> SYNC
+        W1 --> SYNC
+        W2 --> SYNC
+        W3 --> SYNC
+        SYNC --> OUT
+    end
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 3. FA2 Core Algorithm ──────────────────── -->
+  <section id="fa2-algo">
+    <h2>3. FA2 核心算法改进</h2>
+
+    <h3>3.1 减少非 matmul 运算量</h3>
+
+    <p>FA1 在前向传播中，每次处理新的 K/V 块时需要对已经累积的输出矩阵做 rescale：</p>
+
+    <pre><code>// FA1 style — 每次内循环都要 rescale
+O_new = diag(exp(m_old - m_new)) * O_old + exp(S_new - m_new) * V_new
+l_new = exp(m_old - m_new) * l_old + rowsum(exp(S_new - m_new))</code></pre>
+
+    <p>FA2 的改进：<strong>延迟归一化（deferred rescaling）</strong>——在整个 K/V 块迭代完成之前，不对累积输出 <code>O</code> 进行归一化，只在最后一次迭代后做一次归一化。中间迭代只更新 <code>m</code> 和 <code>l</code> 的统计量，而不立即 rescale 输出矩阵。</p>
+
+    <pre><code>// FA2 style — 内循环中不 rescale O，只更新统计量
+for each K/V block j:
+    S_j = Q * K_j^T                    // matmul (Tensor Core)
+    m_j = max(m_{j-1}, rowmax(S_j))    // 更新行最大值
+    P_j = exp(S_j - m_j)               // 局部 softmax 分子
+    l_j = exp(m_{j-1} - m_j) * l_{j-1} + rowsum(P_j)  // 更新 sum
+    O_j = exp(m_{j-1} - m_j) * O_{j-1} + P_j * V_j   // 累积（仍需 rescale）
+
+// 最终归一化：只做一次
+O = O_K / l_K</code></pre>
+
+    <p>实际上 FA2 进一步优化：在中间累积时不乘以 <code>1/l</code>，保存未归一化的 <code>O</code>，仅在最后输出时做一次除法。这样将每个 K/V 块迭代中的 rescale 运算减少到最小，主要让 Tensor Core 做 matmul。</p>
+
+    <div class="callout tip">
+      <strong>为什么 rescale 减少很重要</strong>
+      在 A100 上，FP16 matmul 的 Tensor Core 吞吐量是 FP32 CUDA Core 的约 16 倍。FA1 的大量 rescale 和 elementwise 操作由 CUDA Core 完成，严重拖慢了整体速度。FA2 将这些运算减少到接近最低限度，使 Tensor Core 利用率显著提升。
+    </div>
+
+    <h3>3.2 循环顺序交换（外循环换成 Q 块）</h3>
+
+    <p>这是 FA2 最关键的算法改变。FA1 的循环结构是：</p>
+    <pre><code>// FA1: 外循环 Q 块，内循环 K/V 块（但 warp 级别按 K 维切分）
+for each Q block i:          // outer loop → thread block
+    for each KV block j:     // inner loop
+        compute partial S, update m, l, O</code></pre>
+
+    <p>FA1 中，一个 thread block 内的多个 warp <strong>分工处理同一 Q 行的不同 K 列</strong>，最终需要在 warp 之间做 softmax 归约，有跨 warp 同步开销。</p>
+
+    <p>FA2 改变了 warp 级别的工作切分方式：</p>
+
+    <div class="compare-grid">
+      <div class="box old">
+        <h4 style="color: var(--red)">FA1 Warp 划分</h4>
+        <p style="font-size:.9rem">每个 warp 负责 <strong>K/V 的不同列块</strong>，多个 warp 协作计算同一 Q 行的注意力分数。需要 warp 间 all-reduce 归一化统计量。</p>
+        <p style="font-size:.9rem; color: var(--muted)">通信：warp 间 shared memory 同步</p>
+      </div>
+      <div class="box new">
+        <h4 style="color: var(--green)">FA2 Warp 划分</h4>
+        <p style="font-size:.9rem">每个 warp 负责 <strong>Q 的不同行块</strong>，每个 warp 独立遍历所有 K/V 块，独立完成自己行的 softmax 归一化。</p>
+        <p style="font-size:.9rem; color: var(--muted)">通信：完全无跨 warp 同步</p>
+      </div>
+    </div>
+
+    <div class="diagram-wrap">
+      <h4>FA2 Warp 工作划分（每个 Warp 独立处理 Q 行，无需 warp 间同步）</h4>
+      <div class="mermaid">
+graph TB
+    subgraph TB_FA2["Thread Block (处理 Q 的一个 block)"]
+        direction TB
+        subgraph W0["Warp 0 — Q 行 0-15"]
+            KV0["遍历所有 K/V 块\n独立维护 m0, l0\n输出 O_rows_0-15"]
+        end
+        subgraph W1["Warp 1 — Q 行 16-31"]
+            KV1["遍历所有 K/V 块\n独立维护 m1, l1\n输出 O_rows_16-31"]
+        end
+        subgraph W2["Warp 2 — Q 行 32-47"]
+            KV2["遍历所有 K/V 块\n独立维护 m2, l2\n输出 O_rows_32-47"]
+        end
+        NOTE["各 Warp 完全独立，无需同步"]
+        W0 ~~~ W1 ~~~ W2 ~~~ NOTE
+    end
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 4. GPU Parallelism ─────────────────────── -->
+  <section id="parallelism">
+    <h2>4. GPU 并行性提升</h2>
+
+    <h3>4.1 序列维度并行（Parallelism over Sequence Length）</h3>
+
+    <p>FA1 的并行维度是 <code>batch_size × num_heads</code>：每个 thread block 处理一个 <code>(batch_idx, head_idx)</code> 对。当 batch size = 1、heads = 32 时，只能并发运行 32 个 thread block，而 A100 有 108 个 SM，大量 SM 会处于空闲状态——这在推理阶段（小 batch）是严重问题。</p>
+
+    <p>FA2 增加了<strong>序列维度的并行</strong>：并行维度变为 <code>batch_size × num_heads × ceil(N/B_r)</code>，其中 <code>B_r</code> 是 Q 分块大小。每个 thread block 只处理 Q 序列的一个子范围，多个 thread block 可以并发处理同一个 head 的不同 Q 行。</p>
+
+    <p>这对于长序列尤其关键：序列长度 4096、heads 32 时，FA2 可以并发 <code>32 × (4096/64) = 2048</code> 个 thread block，远超 A100 的 SM 数量，GPU 利用率趋近于 100%。</p>
+
+    <div class="callout note">
+      <strong>为什么 FA1 无法简单地做序列并行</strong>
+      FA1 在每个 thread block 内，warp 按 K 维度切分，因此不同 warp 持有同一 Q 行的不同部分注意力分数，必须在块内汇总。这导致一个 Q 行必须由同一 thread block 完整处理，无法将序列维度进一步切开分配给不同 thread block。FA2 的 warp 按 Q 行切分之后，每个 Q 行完全属于一个 warp，不同 Q 行可以完全独立地给不同 thread block 处理。
+    </div>
+
+    <h3>4.2 Forward 与 Backward 的分开并行</h3>
+
+    <p>在反向传播中，FA2 同样做了序列维度并行的优化。FA1 的 backward pass 中，dQ 的计算需要对所有 K/V 块的贡献求和，这本质上是一个规约操作，FA1 用了一次 atomic add 写回 HBM，会产生写冲突。FA2 通过让每个 thread block 只处理一段 K/V，最后做一次干净的规约来避免 atomic 竞争，backward 速度也提升了约 2x。</p>
+
+    <div class="diagram-wrap">
+      <h4>FA2 整体并行层次结构</h4>
+      <div class="mermaid">
+graph TD
+    A["输入: Q,K,V\n(batch, heads, seq_len, d)"] --> B["并行维度切分\nbatch × heads × seq_chunks"]
+    B --> C0["TB 0\nQ[0:64]"]
+    B --> C1["TB 1\nQ[64:128]"]
+    B --> C2["TB 2\nQ[128:192]"]
+    B --> CN["TB N\nQ[...]"]
+    C0 --> D0["Warp 0: Q行0-15\nWarp 1: Q行16-31\nWarp 2: Q行32-47\nWarp 3: Q行48-63"]
+    D0 --> E0["各 Warp 遍历\n所有 K/V 块\n(SRAM内计算)"]
+    E0 --> F0["写回 HBM\nO[0:64]"]
+      </div>
+    </div>
+
+    <h3>4.3 Warp 内部的 matmul 利用率</h3>
+
+    <p>FA2 精心设计了 Q、K、V 块的大小（<code>B_r</code>、<code>B_c</code>）和 head dimension <code>d</code>，使得内层的 matmul 操作恰好对齐 Tensor Core 的最优 tile size（一般是 16×16 或 16×8 的 wmma 指令）。FA2 支持 head dim 最大 256（FA1 最大 128），对更宽的 head 同样能维持高 Tensor Core 利用率。</p>
+  </section>
+
+  <!-- ── 5. Implementation Details ─────────────── -->
+  <section id="implementation">
+    <h2>5. 工程实现关键细节</h2>
+
+    <h3>5.1 Causal Masking 的 Skip 优化</h3>
+
+    <p>在 causal（自回归）注意力中，位置 <code>i</code> 的 Q 只能 attend 到位置 <code>≤ i</code> 的 K/V。对于 Q 分块 <code>[i_start, i_end]</code> 和 K/V 分块 <code>[j_start, j_end]</code>：</p>
+    <ul>
+      <li>如果 <code>j_end ≤ i_start</code>（K/V 块完全在 Q 块左侧）：整块都是有效的 attend，无需任何 masking，直接做矩阵乘。</li>
+      <li>如果 <code>j_start > i_end</code>（K/V 块完全在 Q 块右侧）：整块都是 masked out，可以<strong>完全跳过</strong>。</li>
+      <li>只有对角线附近的块才需要逐元素地应用 causal mask。</li>
+    </ul>
+
+    <p>FA2 在 kernel 内对这三种情况做了显式区分。对于 causal attention，右上角的 K/V 块（masked 区域）直接 skip，有效运算量减少约 <strong>50%</strong>（与非 causal attention 相比）。</p>
+
+    <pre><code>// Pseudocode: FA2 causal skip logic
+for j in range(num_kv_blocks):
+    j_start = j * B_c
+    j_end   = j_start + B_c
+
+    if j_start > i_end:
+        break  // 后续所有 K/V 块均 masked，直接跳出
+
+    if j_end <= i_start:
+        // 整块无 mask，直接做 matmul，无需逐元素 masking
+        S = Q_block @ K_block.T
+    else:
+        // 边界块：需要逐元素应用 causal mask
+        S = Q_block @ K_block.T
+        S = apply_causal_mask(S, i_start, j_start)</code></pre>
+
+    <div class="callout tip">
+      <strong>实际性能影响</strong>
+      在 GPT 风格的预填充（prefill）阶段，序列长度越长，右上角的 skip 区域越大（占所有块的约 50%）。FA2 的 causal 模式几乎与非 causal 的一半 FLOP 量完美对应，避免了对无效区域的任何计算。
+    </div>
+
+    <h3>5.2 Shared Memory 布局与 Bank Conflict 消除</h3>
+
+    <p>FA2 的 SRAM（shared memory）布局针对 Ampere/Hopper 架构的 128-byte cache line 做了对齐。Q、K、V 块在 shared memory 中的 stride 被精心设置，使得 warp 内 32 个线程的访问模式恰好 coalesce，不产生 bank conflict。</p>
+
+    <p>具体地，对于 head dim = 64 的 FP16，每行 128 bytes 恰好是一个 cache line，每个 warp 一次加载 16 行（256 字节/线程），满足 128-byte 对齐要求。head dim = 128 时，FA2 在 shared memory 中使用 swizzled layout，错开相邻行的 bank offset，消除 conflict。</p>
+
+    <h3>5.3 Register 压力与 Occupancy 的权衡</h3>
+
+    <p>Flash Attention 的 SRAM 需求量决定了每个 SM 能运行多少个 thread block（occupancy）。FA2 通过以下方式优化：</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>参数</th>
+          <th>FA1</th>
+          <th>FA2</th>
+          <th>影响</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Q block 行数 B_r</td>
+          <td>64</td>
+          <td>64 (forward) / 32 (backward)</td>
+          <td>控制 SRAM 占用</td>
+        </tr>
+        <tr>
+          <td>K/V block 列数 B_c</td>
+          <td>64</td>
+          <td>64 (forward) / 64 (backward)</td>
+          <td>内循环 tile 大小</td>
+        </tr>
+        <tr>
+          <td>head dim 上限</td>
+          <td>128</td>
+          <td>256</td>
+          <td>支持更大 head</td>
+        </tr>
+        <tr>
+          <td>Warp 数量/TB</td>
+          <td>4</td>
+          <td>4 (forward) / 8 (backward)</td>
+          <td>backward 用更多 warp 摊薄 latency</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>FA2 的 backward pass 特别重要：FA1 的 backward 有时会因为寄存器压力过高导致 register spilling（溢出到 L2 缓存），FA2 通过精确调整 tile size 和寄存器分配，避免了 spilling，backward 速度提升尤为显著。</p>
+
+    <h3>5.4 Multi-Query Attention (MQA) 与 Grouped-Query Attention (GQA)</h3>
+
+    <p>MQA（Shazeer 2019）和 GQA（Ainslie et al. 2023）中，K/V heads 数量远少于 Q heads（如 Q 有 32 个 head，K/V 只有 1 或 8 个）。FA2 原生支持这种模式：</p>
+
+    <pre><code>// GQA 中 K/V 的 head index 计算
+kv_head_idx = q_head_idx // (num_q_heads // num_kv_heads)
+
+// 不同 Q head 共享同一 K/V head 的内存地址
+K_ptr = K_base + kv_head_idx * kv_head_stride
+V_ptr = V_base + kv_head_idx * kv_head_stride</code></pre>
+
+    <p>这样在 kernel 内无需额外的 K/V 广播，多个 Q head 的 thread block 直接读取同一 K/V 地址，只是通过索引映射来完成，不产生额外 HBM 流量。</p>
+
+    <h3>5.5 前向传播保存 softmax 统计量用于反向传播</h3>
+
+    <p>标准注意力的反向传播需要前向传播的中间激活值（整个 <code>N×N</code> 注意力矩阵 <code>P</code>）。Flash Attention 系列的核心创新是：只需保存 <code>m</code>（行最大值）和 <code>l</code>（行 exp sum），就能在反向传播时<strong>重新计算</strong>所需的局部注意力分数，节省 <code>O(N²)</code> 的内存，仅需 <code>O(N)</code>。</p>
+
+    <p>FA2 将 <code>m</code> 和 <code>l</code> 合并为一个向量 <code>L = m + log(l)</code>（log-sum-exp 值），这样反向传播中只需一个标量即可重建 softmax 分子，进一步减少前向传播需要存储的数据量。</p>
+
+    <pre><code>// FA2 forward: 保存 LSE (log-sum-exp)
+L[i] = m_i + log(l_i)   // 每行一个标量，O(N) 存储
+
+// FA2 backward: 用 L 重建注意力权重
+// 对于 (Q_i, K_j) 对:
+S_ij = Q_i @ K_j^T / sqrt(d)
+P_ij = exp(S_ij - L[i])   // 直接得到归一化后的注意力权重</code></pre>
+
+    <div class="diagram-wrap">
+      <h4>Flash Attention 2 前向传播完整数据流</h4>
+      <div class="mermaid">
+sequenceDiagram
+    participant HBM as HBM (显存)
+    participant SRAM as SRAM (片上缓存)
+    participant TC as Tensor Core
+
+    HBM->>SRAM: 加载 Q_block[i] (一次)
+    loop 遍历每个 K/V 块 j
+        HBM->>SRAM: 加载 K_block[j], V_block[j]
+        SRAM->>TC: Q_i × K_j^T → S_ij
+        TC->>SRAM: S_ij (注意力分数)
+        Note over SRAM: 更新 m_i, l_i (online softmax)
+        SRAM->>TC: softmax(S_ij) × V_j → 累积 O_i
+        TC->>SRAM: O_i (未归一化)
+    end
+    Note over SRAM: 最终归一化: O_i /= l_i
+    SRAM->>HBM: 写回 O_block[i]
+    SRAM->>HBM: 写回 L[i] = m_i + log(l_i)
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 6. Performance ─────────────────────────── -->
+  <section id="performance">
+    <h2>6. 性能对比</h2>
+
+    <p>以下数据来自论文 Table 1 和 Figure 3，测试环境为 A100-SXM4-80GB，序列长度 2048，head dim 64，batch=8，heads=16，FP16精度。</p>
+
+    <div class="chart-wrap">
+      <h4>A100 上各注意力实现的 FLOPS 利用率对比（head_dim=64, seq_len=2048）</h4>
+      <canvas id="flopsChart"></canvas>
+    </div>
+
+    <div class="chart-wrap">
+      <h4>Forward Pass 速度对比（TFLOPs/s, A100, FP16, 不同序列长度）</h4>
+      <canvas id="speedChart"></canvas>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>实现</th>
+          <th>A100 FLOPs 利用率</th>
+          <th>内存复杂度</th>
+          <th>最大序列长度（A100 80G）</th>
+          <th>MQA/GQA 支持</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>标准 PyTorch Attention</td>
+          <td>~25-30%</td>
+          <td>O(N²)</td>
+          <td>~16K (FP16)</td>
+          <td>需手动实现</td>
+        </tr>
+        <tr>
+          <td>Flash Attention 1</td>
+          <td>~35%</td>
+          <td>O(N)</td>
+          <td>~64K+</td>
+          <td>需手动实现</td>
+        </tr>
+        <tr>
+          <td>Flash Attention 2</td>
+          <td>~72%</td>
+          <td>O(N)</td>
+          <td>~64K+</td>
+          <td>原生支持</td>
+        </tr>
+        <tr>
+          <td>xFormers (memory-efficient)</td>
+          <td>~50-60%</td>
+          <td>O(N)</td>
+          <td>~64K+</td>
+          <td>部分支持</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout note">
+      <strong>Backward Pass 的提升更显著</strong>
+      FA2 相比 FA1 在 backward pass 上的提升（约 2.5x）大于 forward pass（约 2x）。这是因为 backward 本来就有更多非 matmul 运算和 warp 间通信，FA2 对这些的改进尤为明显。在实际训练中，backward 通常占总计算时间的 2/3，因此 backward 的加速对训练吞吐量影响更大。
+    </div>
+
+    <h3>推理阶段（小 batch）的提升</h3>
+    <p>在自回归生成（decode）阶段，batch size 通常为 1-8，序列在不断增长。FA1 此时的 GPU 利用率极低（&lt;10%），因为并行度只有 <code>batch × heads</code>，远不够填满 GPU。FA2 加入序列维度并行后，即使 batch=1，依然能通过序列分块给多个 SM 分配工作，利用率显著提升。</p>
+  </section>
+
+  <!-- ── 7. Limitations ─────────────────────────── -->
+  <section id="limitations">
+    <h2>7. 局限与后续工作</h2>
+
+    <h3>7.1 局限</h3>
+    <ul>
+      <li><strong>CUDA 专属</strong>：FA2 的实现依赖 CUDA 的 warp-level 原语（<code>__shfl_sync</code>、<code>wmma</code> 指令），不支持 ROCm/AMD GPU 或其他加速器（TPU、IPU）。</li>
+      <li><strong>序列长度对 BlockSize 的敏感性</strong>：block size 选择（<code>B_r</code>、<code>B_c</code>）在不同 head dim 和序列长度下有所不同，论文给出的最优 block size 并不是通用的，需要 autotuning。</li>
+      <li><strong>不支持稀疏注意力模式</strong>：FA2 假设全 dense attention（或标准 causal attention），对于 sliding window、Longformer 类稀疏 pattern 需要额外适配。</li>
+      <li><strong>Decode 阶段依然受限</strong>：在 batch=1 的逐 token decode 时，<code>seq_q = 1</code>，序列并行无法帮助，仍然是 memory-bound 的操作，此时 FA2 的优势不如 prefill 阶段明显。</li>
+      <li><strong>Dropout 支持限制</strong>：FA2 的 attention dropout 实现需要保存随机数状态，在很长序列下有额外开销。</li>
+    </ul>
+
+    <h3>7.2 后续工作（Flash Attention 3）</h3>
+    <p>FA3（2024年，针对 Hopper H100 架构）进一步：利用 H100 的异步 TMA（Tensor Memory Accelerator）做 overlap 加载与计算、利用 wgmma 指令做更大粒度的 warp group matmul、支持 FP8 精度。FA3 在 H100 上达到了约 75% 的 FP16 FLOPS 利用率（H100 FP8 可达 ~85%）。</p>
+  </section>
+
+  <!-- ── 8. Takeaways ────────────────────────────── -->
+  <section id="takeaways">
+    <h2>8. Takeaways</h2>
+
+    <h3>对 LLM 从业者的意义</h3>
+    <ul>
+      <li><strong>训练加速</strong>：FA2 使得在单 A100 上训练更长序列（4K、8K、32K）成为可能，而不需要增加显存。GPT-4 规模的模型训练中，attention kernel 的时间占比可能高达 30-40%，FA2 直接将这部分时间减半。</li>
+      <li><strong>推理加速</strong>：vLLM、TGI、TensorRT-LLM 等所有主流推理框架都已集成 FA2 作为默认 attention kernel。在 prefill 阶段尤其显著。</li>
+      <li><strong>长上下文可行性</strong>：FA2 + GQA 的组合使得 128K 上下文的 LLM 推理在单机上变得实用（见 Llama 3.1 的实现）。</li>
+    </ul>
+
+    <h3>算法层面的启示</h3>
+    <ul>
+      <li><strong>循环顺序的选择不是小事</strong>：FA2 中将内外循环的调换（以及随之而来的 warp 工作划分改变）是整个算法改进的核心。同样的计算量，不同的循环结构导致了 2x 的性能差距。</li>
+      <li><strong>尽可能延迟归一化</strong>：FA2 的 deferred normalization 思路在其他算法（如 FlashDecoding）中也被应用。只要能保证最终结果正确，中间状态保持"unnormalized"可以大幅减少运算量。</li>
+      <li><strong>非 matmul 运算是瓶颈</strong>：在现代 GPU 上，matmul 吞吐量远高于其他操作。任何频繁的逐元素操作（rescale、softmax）都需要被合并或减少到最低频率。</li>
+      <li><strong>硬件并行度决定算法设计</strong>：FA2 中序列维度并行的核心动机是"SM 数量 &gt;&gt; batch×heads"这个运行时观察。好的系统设计需要深入理解目标硬件的并行层次。</li>
+    </ul>
+
+    <div class="callout key">
+      <strong>最重要的一个结论</strong>
+      Flash Attention 2 的改进不是靠更聪明的数学，而是靠更深入理解 GPU 硬件。FA1 到 FA2 的算法是等价的——产出完全相同的数值结果——但通过调整工作划分方式，将 GPU 利用率从 35% 提升到 72%。这说明对于 GPU kernel 工程，"如何并行"和"并行什么"同样重要，甚至更重要。
+    </div>
+  </section>
+
+  <!-- ── References ─────────────────────────────── -->
+  <section id="refs" class="refs">
+    <h2>References</h2>
+    <ol>
+      <li>Tri Dao. <a href="https://arxiv.org/abs/2307.08691" target="_blank">FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning</a>. arXiv:2307.08691, 2023.</li>
+      <li>Tri Dao, Daniel Fu, Stefano Ermon, Atri Rudra, Christopher Ré. <a href="https://arxiv.org/abs/2205.14135" target="_blank">FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</a>. NeurIPS 2022.</li>
+      <li>Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, Tri Dao. <a href="https://arxiv.org/abs/2407.08608" target="_blank">FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision</a>. arXiv:2407.08608, 2024.</li>
+      <li>Noam Shazeer. <a href="https://arxiv.org/abs/1911.02150" target="_blank">Fast Transformer Decoding: One Write-Head is All You Need</a>. arXiv:1911.02150, 2019. (Multi-Query Attention)</li>
+      <li>Joshua Ainslie, James Lee-Thorp, et al. <a href="https://arxiv.org/abs/2305.13245" target="_blank">GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints</a>. EMNLP 2023.</li>
+      <li>Tri Dao et al. <a href="https://github.com/Dao-AILab/flash-attention" target="_blank">flash-attention GitHub Repository</a>. (Official implementation: csrc/flash_attn/src/)</li>
+      <li>Milind Shyani. <a href="https://www.youtube.com/watch?v=IoMSGuiwV3g" target="_blank">Flash Attention 2 Explained</a>. Detailed walkthrough video, 2023.</li>
+    </ol>
+  </section>
+
+  <footer class="report-footer">
+    <span>CJ-Note · LLM Inference Research</span>
+    <span>Generated 2026-04-10</span>
+  </footer>
+</div>
+
+<script>
+  // Initialize Mermaid with dark theme
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      background: '#161b22',
+      primaryColor: '#1f6feb',
+      primaryTextColor: '#e6edf3',
+      lineColor: '#8b949e',
+      secondaryColor: '#21262d',
+      tertiaryColor: '#30363d'
+    }
+  });
+
+  // Chart 1: FLOPS Utilization
+  const ctx1 = document.getElementById('flopsChart');
+  if (ctx1) {
+    new Chart(ctx1, {
+      type: 'bar',
+      data: {
+        labels: ['PyTorch Std Attn', 'Flash Attention 1', 'Flash Attention 2', 'xFormers'],
+        datasets: [{
+          label: 'A100 FLOPs 利用率 (%)',
+          data: [28, 35, 72, 55],
+          backgroundColor: ['#30363d', '#d29922', '#58a6ff', '#3fb950'],
+          borderColor: ['#8b949e', '#d29922', '#58a6ff', '#3fb950'],
+          borderWidth: 1,
+          borderRadius: 4
+        }]
+      },
+      options: {
+        plugins: {
+          legend: { labels: { color: '#8b949e' } },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => ` ${ctx.parsed.y}% of theoretical FLOPS`
+            }
+          }
+        },
+        scales: {
+          x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+          y: {
+            ticks: { color: '#8b949e', callback: v => v + '%' },
+            grid: { color: '#21262d' },
+            max: 100,
+            title: { display: true, text: 'FLOPs 利用率 (%)', color: '#8b949e' }
+          }
+        }
+      }
+    });
+  }
+
+  // Chart 2: Forward Speed across sequence lengths
+  const ctx2 = document.getElementById('speedChart');
+  if (ctx2) {
+    new Chart(ctx2, {
+      type: 'line',
+      data: {
+        labels: ['512', '1024', '2048', '4096', '8192', '16384'],
+        datasets: [
+          {
+            label: 'Flash Attention 2 (Forward)',
+            data: [60, 80, 110, 120, 125, 127],
+            borderColor: '#58a6ff',
+            backgroundColor: 'rgba(88,166,255,0.1)',
+            borderWidth: 2,
+            pointRadius: 4,
+            fill: true,
+            tension: 0.3
+          },
+          {
+            label: 'Flash Attention 1 (Forward)',
+            data: [30, 45, 58, 65, 68, 70],
+            borderColor: '#d29922',
+            backgroundColor: 'rgba(210,153,34,0.1)',
+            borderWidth: 2,
+            pointRadius: 4,
+            fill: true,
+            tension: 0.3
+          },
+          {
+            label: 'PyTorch Standard (Forward)',
+            data: [25, 30, 35, 28, null, null],
+            borderColor: '#8b949e',
+            backgroundColor: 'rgba(139,148,158,0.1)',
+            borderWidth: 2,
+            pointRadius: 4,
+            fill: true,
+            tension: 0.3
+          }
+        ]
+      },
+      options: {
+        plugins: {
+          legend: { labels: { color: '#8b949e' } },
+          tooltip: { mode: 'index' }
+        },
+        scales: {
+          x: {
+            ticks: { color: '#8b949e' },
+            grid: { color: '#21262d' },
+            title: { display: true, text: '序列长度', color: '#8b949e' }
+          },
+          y: {
+            ticks: { color: '#8b949e' },
+            grid: { color: '#21262d' },
+            title: { display: true, text: 'TFLOPs/s', color: '#8b949e' }
+          }
+        }
+      }
+    });
+  }
+</script>
+</body>
+</html>

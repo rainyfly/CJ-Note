@@ -1,0 +1,960 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Speculative Decoding Deep Dive — CJ-Note</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #0d1117; --surface: #161b22; --border: #30363d;
+      --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+      --green: #3fb950; --yellow: #d29922; --red: #f85149;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font-sans);
+           line-height: 1.7; padding: 0 1rem; }
+    .page-wrap { max-width: 900px; margin: 0 auto; padding: 2rem 0 4rem; }
+
+    /* Header */
+    .report-header { border-bottom: 1px solid var(--border); padding-bottom: 1.5rem; margin-bottom: 2rem; }
+    .report-header h1 { font-size: 1.9rem; color: var(--accent); margin-bottom: .5rem; }
+    .meta { color: var(--muted); font-size: .85rem; display: flex; gap: 1.5rem; flex-wrap: wrap; }
+    .meta span::before { content: "• "; }
+    .meta span:first-child::before { content: ""; }
+    .back-link { display: inline-block; margin-bottom: 1rem; color: var(--muted);
+                 text-decoration: none; font-size: .85rem; }
+    .back-link:hover { color: var(--accent); }
+
+    /* Sections */
+    h2 { font-size: 1.3rem; color: var(--text); margin: 2.5rem 0 .8rem;
+         padding-bottom: .4rem; border-bottom: 1px solid var(--border); }
+    h3 { font-size: 1.05rem; color: var(--accent); margin: 1.5rem 0 .5rem; }
+    h4 { font-size: .95rem; color: var(--muted); margin: 1rem 0 .3rem; text-transform: uppercase;
+         letter-spacing: .05em; }
+    p { margin-bottom: 1rem; color: var(--text); }
+    ul, ol { padding-left: 1.4rem; margin-bottom: 1rem; }
+    li { margin-bottom: .35rem; }
+
+    /* TL;DR box */
+    .tldr { background: var(--surface); border: 1px solid var(--accent);
+            border-left: 4px solid var(--accent); border-radius: 6px;
+            padding: 1rem 1.2rem; margin: 1.5rem 0; }
+    .tldr h3 { color: var(--accent); margin: 0 0 .5rem; font-size: .9rem;
+               text-transform: uppercase; letter-spacing: .1em; }
+    .tldr ul { padding-left: 1.2rem; }
+    .tldr li { margin-bottom: .3rem; }
+
+    /* Key-value info grid */
+    .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                 gap: .75rem; margin: 1rem 0 1.5rem; }
+    .info-card { background: var(--surface); border: 1px solid var(--border);
+                 border-radius: 6px; padding: .8rem 1rem; }
+    .info-card .label { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em;
+                        color: var(--muted); margin-bottom: .3rem; }
+    .info-card .value { font-size: 1.1rem; font-weight: 600; color: var(--accent);
+                        font-family: var(--font-mono); }
+    .info-card .sublabel { font-size: .75rem; color: var(--muted); margin-top: .2rem; }
+
+    /* Code blocks */
+    pre { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+          padding: 1rem 1.2rem; overflow-x: auto; margin: 1rem 0; font-size: .85rem;
+          font-family: var(--font-mono); line-height: 1.5; }
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 3px;
+           padding: .15em .4em; font-size: .85em; font-family: var(--font-mono); }
+    pre code { background: none; border: none; padding: 0; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .9rem; }
+    th { background: var(--surface); color: var(--muted); font-weight: 600; text-align: left;
+         padding: .6rem .8rem; border: 1px solid var(--border); font-size: .8rem;
+         text-transform: uppercase; letter-spacing: .04em; }
+    td { padding: .6rem .8rem; border: 1px solid var(--border); vertical-align: top; }
+    tr:nth-child(even) td { background: rgba(255,255,255,.02); }
+
+    /* Chart containers */
+    .chart-wrap { background: var(--surface); border: 1px solid var(--border);
+                  border-radius: 8px; padding: 1.2rem; margin: 1.2rem 0; }
+    .chart-wrap h4 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+                     letter-spacing: .05em; margin-bottom: .8rem; }
+    .chart-wrap canvas { max-height: 320px; }
+
+    /* Mermaid diagrams */
+    .diagram-wrap { background: var(--surface); border: 1px solid var(--border);
+                    border-radius: 8px; padding: 1.5rem; margin: 1.2rem 0;
+                    overflow-x: auto; text-align: center; }
+    .diagram-wrap h4 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+                       letter-spacing: .05em; margin-bottom: 1rem; text-align: left; }
+
+    /* Callout boxes */
+    .callout { border-radius: 6px; padding: .8rem 1rem; margin: 1rem 0;
+               border-left: 4px solid; }
+    .callout.note { background: rgba(88,166,255,.07); border-color: var(--accent); }
+    .callout.tip  { background: rgba(63,185,80,.07);  border-color: var(--green); }
+    .callout.warn { background: rgba(210,153,34,.07); border-color: var(--yellow); }
+    .callout.key  { background: rgba(248,81,73,.07);  border-color: var(--red); }
+    .callout strong { display: block; margin-bottom: .3rem; font-size: .85rem;
+                      text-transform: uppercase; letter-spacing: .04em; }
+
+    /* Reference list */
+    .refs ol { padding-left: 1.5rem; }
+    .refs li { margin-bottom: .5rem; font-size: .9rem; color: var(--muted); }
+    .refs a { color: var(--accent); }
+
+    /* TOC */
+    .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+           padding: 1rem 1.2rem; margin: 0 0 2rem; font-size: .9rem; }
+    .toc h3 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+              letter-spacing: .1em; margin-bottom: .6rem; }
+    .toc ol { padding-left: 1.3rem; }
+    .toc li { margin-bottom: .25rem; }
+    .toc a { color: var(--muted); text-decoration: none; }
+    .toc a:hover { color: var(--accent); }
+
+    /* Footer */
+    .report-footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border);
+                     color: var(--muted); font-size: .8rem; display: flex; justify-content: space-between; }
+
+    /* Math-style formula display */
+    .formula { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+               padding: .8rem 1.2rem; margin: 1rem 0; font-family: var(--font-mono);
+               font-size: .9rem; text-align: center; color: var(--accent); }
+    .formula .comment { color: var(--muted); font-size: .8rem; display: block; margin-top: .3rem; text-align: left; }
+
+    /* Two-column comparison */
+    .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; }
+    .compare-box { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: .9rem 1rem; }
+    .compare-box .compare-label { font-size: .75rem; text-transform: uppercase; letter-spacing: .06em;
+                                   color: var(--muted); margin-bottom: .5rem; }
+    .compare-box.before { border-left: 3px solid var(--red); }
+    .compare-box.after  { border-left: 3px solid var(--green); }
+    @media (max-width: 600px) { .compare { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<div class="page-wrap">
+
+  <a href="../index.html" class="back-link">← Back to CJ-Note</a>
+
+  <header class="report-header">
+    <h1>Speculative Decoding Deep Dive</h1>
+    <div class="meta">
+      <span>TYPE: FEATURE DEEP DIVE</span>
+      <span>DATE: 2026-04-10</span>
+      <span>TOPIC: Decoding / Throughput / Latency</span>
+    </div>
+  </header>
+
+  <!-- TL;DR -->
+  <div class="tldr">
+    <h3>TL;DR</h3>
+    <ul>
+      <li>Speculative decoding 用一个小的 draft 模型快速生成 γ 个候选 token，再用大模型并行验证，输出分布与纯大模型等价（无损）。</li>
+      <li>加速比取决于 draft 命中率 α：当 α 接近 1 时理论加速可达 γ+1 倍；当 α 接近 0 时反而比 naive 更慢。</li>
+      <li>适合低并发/对话场景（memory-bandwidth bound），不适合高并发批量推理（compute bound）；draft 模型选型是关键工程决策。</li>
+      <li>主流框架（vLLM, TRT-LLM, SGLang, HuggingFace）均已实现，但各有不同的 draft 策略：外部 draft 模型、同模型草稿头（Medusa）、n-gram lookup、EAGLE 等。</li>
+      <li>没有免费的午餐：speculative decoding 引入了 draft 模型的内存开销和 KV cache 管理复杂度，并发数上升后收益快速消失。</li>
+    </ul>
+  </div>
+
+  <!-- Table of Contents -->
+  <nav class="toc">
+    <h3>Contents</h3>
+    <ol>
+      <li><a href="#background">Background — 为什么 LLM 推理是 Memory-Bandwidth Bound</a></li>
+      <li><a href="#mechanism">核心机制：Draft + Verify</a></li>
+      <li><a href="#acceptance">接受采样算法与等价性证明</a></li>
+      <li><a href="#speedup">理论加速分析</a></li>
+      <li><a href="#when-works">什么场景有效 vs 无效</a></li>
+      <li><a href="#variants">主要变体：Medusa / EAGLE / n-gram</a></li>
+      <li><a href="#implementations">业界框架实现</a></li>
+      <li><a href="#tradeoffs">工程权衡与实践建议</a></li>
+      <li><a href="#takeaways">Takeaways</a></li>
+      <li><a href="#refs">References</a></li>
+    </ol>
+  </nav>
+
+  <!-- ── 1. Background ──────────────────────────── -->
+  <section id="background">
+    <h2>1. Background — 为什么 LLM 推理是 Memory-Bandwidth Bound</h2>
+
+    <p>自回归语言模型推理时，每生成一个 token 都需要把模型的全部参数从 HBM 加载进 SRAM/寄存器，进行一次前向传播，然后输出一个 token。这个"加载权重 → 产出一个 token"的过程是 <strong>memory-bandwidth bound</strong> 的：GPU 的算力（FLOP/s）远超实际利用率，因为带宽才是瓶颈。</p>
+
+    <div class="info-grid">
+      <div class="info-card">
+        <div class="label">H100 SXM5 Compute</div>
+        <div class="value">1,979 TFLOP/s</div>
+        <div class="sublabel">BF16 Tensor Core</div>
+      </div>
+      <div class="info-card">
+        <div class="label">H100 HBM3 Bandwidth</div>
+        <div class="value">3.35 TB/s</div>
+        <div class="sublabel">峰值 HBM 带宽</div>
+      </div>
+      <div class="info-card">
+        <div class="label">Arithmetic Intensity</div>
+        <div class="value">~1 FLOP/B</div>
+        <div class="sublabel">单 token 解码 (batch=1)</div>
+      </div>
+      <div class="info-card">
+        <div class="label">Ridge Point</div>
+        <div class="value">~590 FLOP/B</div>
+        <div class="sublabel">compute/memory 拐点</div>
+      </div>
+    </div>
+
+    <p>以 Llama-3 70B（BF16，~140GB 参数）为例，在 batch=1 下每个 token 需要读取 ~140GB 参数，H100 SXM5 上大约需要 42ms，也就是约 24 tokens/s 上限，远未触及算力天花板。</p>
+
+    <div class="callout note">
+      <strong>核心观察</strong>
+      解码阶段每步只产出 1 个 token，但每步都要完整地过一次大模型。如果我们能在"每次大模型前向"中产出更多 token，就能把带宽利用率摊薄，提升有效吞吐。
+    </div>
+
+    <div class="compare">
+      <div class="compare-box before">
+        <div class="compare-label">Before — 标准自回归</div>
+        <p style="font-size:.9rem;color:var(--muted)">每次大模型前向 → 产出 1 token → 下次前向。N 个 token 需要 N 次完整前向，带宽利用率低。</p>
+      </div>
+      <div class="compare-box after">
+        <div class="compare-label">After — Speculative Decoding</div>
+        <p style="font-size:.9rem;color:var(--muted)">小 draft 模型先快速生成 γ 个 token → 大模型一次并行验证全部 γ+1 个位置 → 平均每次大模型前向产出 &gt;1 个 token。</p>
+      </div>
+    </div>
+
+    <p>Speculative Decoding 最早由两篇工作同期独立提出：Chen et al. 2023（Google DeepMind，"Accelerating Large Language Model Decoding with Speculative Sampling"，arXiv 2302.01318）和 Leviathan et al. 2023（Google，"Fast Inference from Transformers via Speculative Decoding"，ICML 2023，arXiv 2211.17192）。两者核心思想一致，后者给出了更严格的理论证明。</p>
+  </section>
+
+  <!-- ── 2. 核心机制 ──────────────────────────── -->
+  <section id="mechanism">
+    <h2>2. 核心机制：Draft + Verify</h2>
+
+    <p>设大模型为 M（target model），小模型为 m（draft model）。推理分两阶段循环：</p>
+
+    <h3>Phase 1 — Draft（起草）</h3>
+    <p>使用 draft model m 自回归地生成 γ 个 token（γ 通常取 4–8）。Draft 模型很小（参数量通常是 target 的 1/10 至 1/100），速度很快，cost 可以忽略。</p>
+
+    <pre><code># Draft phase (simplified pseudocode)
+draft_tokens = []
+x = current_prefix  # already generated tokens
+for i in range(gamma):
+    q_i = draft_model.forward(x)         # logits from draft model
+    t_i = sample(q_i)                    # sample a draft token
+    draft_tokens.append(t_i)
+    x = concat(x, t_i)                   # extend prefix
+# Now draft_tokens = [t_1, t_2, ..., t_γ]</code></pre>
+
+    <h3>Phase 2 — Verify（验证）</h3>
+    <p>将原始 prefix + 所有 draft token 拼接成长度为 n+γ 的序列，<strong>一次性</strong>送入 target model 做前向，得到每个位置的概率分布 p_1, p_2, …, p_γ, p_{γ+1}。这是关键：target model 可以利用 attention 并行处理所有位置，而不是顺序执行 γ 次。</p>
+
+    <pre><code># Verify phase (simplified pseudocode)
+full_sequence = concat(prefix, draft_tokens)
+# One forward pass of target model across all γ+1 positions
+target_logits = target_model.forward(full_sequence)  # shape: [γ+1, vocab]
+p = [softmax(target_logits[i]) for i in range(gamma + 1)]
+q = draft_logits  # probabilities used during draft phase</code></pre>
+
+    <div class="diagram-wrap">
+      <h4>Speculative Decoding 时序图</h4>
+      <div class="mermaid">
+sequenceDiagram
+    participant D as Draft Model (small)
+    participant T as Target Model (large)
+    participant S as Sampler
+
+    Note over D,T: t=0: prefix = [x1, x2, ..., xn]
+
+    D->>D: Forward(xn) → q1, sample t1
+    D->>D: Forward(xn,t1) → q2, sample t2
+    D->>D: Forward(xn,t1,t2) → q3, sample t3
+    D->>D: Forward(xn,t1,t2,t3) → q4, sample t4
+    Note over D: γ=4 draft tokens: [t1,t2,t3,t4]
+
+    D->>T: Send [x1..xn, t1, t2, t3, t4]
+    T->>T: ONE parallel forward pass → p1,p2,p3,p4,p5
+    T->>S: Return p1..p5
+
+    S->>S: Accept/Reject t1 via p1 vs q1
+    S->>S: Accept/Reject t2 via p2 vs q2
+    S->>S: Accept/Reject t3 via p3 vs q3
+    S->>S: Accept/Reject t4 via p4 vs q4
+    S->>S: Sample bonus token from p5 (or corrected dist)
+
+    Note over S: Result: up to γ+1 = 5 new tokens per cycle
+      </div>
+    </div>
+
+    <h3>接受后的序列更新</h3>
+    <p>设前 k 个 draft token 全部接受（k ≤ γ），第 k+1 个被拒绝。则：</p>
+    <ul>
+      <li>接受 t_1 … t_k（直接加入输出序列）</li>
+      <li>从 target model 在位置 k+1 的修正分布中再采样一个 token t'</li>
+      <li>输出序列增加 k+1 个 token（而不是 1 个）</li>
+      <li>如果全部 γ 个都接受，还可以从 p_{γ+1} 多采一个，共产出 γ+1 个</li>
+    </ul>
+
+    <div class="callout tip">
+      <strong>关键：每轮至少产出 1 个 token</strong>
+      即使所有 draft token 全被拒绝（最坏情况），target model 仍会从 p_1 采样一个有效 token。所以 speculative decoding 永远不会比标准解码产出更少。
+    </div>
+  </section>
+
+  <!-- ── 3. 接受采样算法 ──────────────────────────── -->
+  <section id="acceptance">
+    <h2>3. 接受采样算法与等价性证明</h2>
+
+    <p>这是 speculative decoding 最精妙的部分。朴素想法是"如果 draft 模型预测的 token 和 target 模型预测一致就接受"——但这会改变输出分布。Leviathan 等人给出了正确的接受准则，保证输出分布完全等价于 target 模型的原始分布。</p>
+
+    <h3>接受准则（Modified Rejection Sampling）</h3>
+    <p>对于第 i 个位置的 draft token <code>t_i</code>：</p>
+
+    <div class="formula">
+      Accept t_i  with probability  min(1,  p_i(t_i) / q_i(t_i) )
+      <span class="comment">其中 p_i = target model 在位置 i 的分布，q_i = draft model 在位置 i 的分布</span>
+    </div>
+
+    <p>如果 t_i 被拒绝，则从如下修正分布中重新采样：</p>
+
+    <div class="formula">
+      p'_i(x) = normalize( max(0,  p_i(x) − q_i(x)) )
+      <span class="comment">修正分布：target 分布中去掉 draft 已覆盖的部分，再归一化</span>
+    </div>
+
+    <h3>等价性直觉</h3>
+    <p>考虑对某个 token x，经过接受/拒绝采样后它被输出的概率是多少？</p>
+    <ul>
+      <li><strong>Draft 采样到 x 且被接受：</strong>概率 = q(x) × min(1, p(x)/q(x)) = min(q(x), p(x))</li>
+      <li><strong>Draft 采样到某个被拒绝的 y，然后从 p' 采样到 x：</strong>概率 = [Σ_y q(y)·max(0, 1−p(y)/q(y))] × p'(x)</li>
+    </ul>
+    <p>对两种情况求和，结果恰好等于 p(x)。这就是为什么这个算法能保证输出与 target 模型完全等价——不是近似，而是精确的分布等价。</p>
+
+    <div class="callout note">
+      <strong>无损性（Lossless Property）</strong>
+      Speculative decoding 是一种精确加速方法：对于任何输入，其生成分布与 target model 单步自回归生成的分布在统计上完全相同。这与知识蒸馏、量化等有损方法本质不同。
+    </div>
+
+    <h3>Temperature / Top-p 的处理</h3>
+    <p>如果 target 模型使用了 temperature t 或 top-p 采样，则接受准则中的 p_i 应替换为经过对应变换后的分布。实现时需要确保 draft 阶段和验证阶段使用<strong>相同的采样参数</strong>，否则等价性被破坏。这是实现上容易出 bug 的地方。</p>
+  </section>
+
+  <!-- ── 4. 理论加速分析 ──────────────────────────── -->
+  <section id="speedup">
+    <h2>4. 理论加速分析</h2>
+
+    <h3>平均每轮产出的 token 数</h3>
+    <p>设每个 draft token 被接受的概率为 α（假设各位置独立同分布，这是一个近似），则：</p>
+
+    <div class="formula">
+      E[accepted tokens per round] = (1 − α^(γ+1)) / (1 − α)
+      <span class="comment">这包括了全接受时的 bonus token；当 α→1 时趋于 γ+1，当 α→0 时趋于 1</span>
+    </div>
+
+    <h3>加速比</h3>
+    <p>设 target model 单次前向时间为 T_big，draft model γ 次前向总时间为 T_draft，则理论加速比为：</p>
+
+    <div class="formula">
+      Speedup ≈ E[accepted tokens] / (1 + T_draft/T_big)
+      <span class="comment">当 T_draft ≪ T_big（draft 模型极快）且 α 较高时，加速比趋近于 E[accepted tokens]</span>
+    </div>
+
+    <div class="chart-wrap">
+      <h4>理论加速比 vs 接受率 α（γ=4，T_draft/T_big=0.1）</h4>
+      <canvas id="speedupChart"></canvas>
+    </div>
+
+    <div class="chart-wrap">
+      <h4>不同 γ 下的平均产出 Token 数 vs 接受率 α</h4>
+      <canvas id="tokensChart"></canvas>
+    </div>
+
+    <h3>关键参数 α 的含义</h3>
+    <p>α 不是固定值，它随输入内容动态变化：</p>
+    <table>
+      <tr>
+        <th>场景</th>
+        <th>典型 α</th>
+        <th>说明</th>
+      </tr>
+      <tr>
+        <td>代码补全（函数体）</td>
+        <td>0.80–0.95</td>
+        <td>小模型擅长局部语法和重复模式，命中率高</td>
+      </tr>
+      <tr>
+        <td>翻译、摘要</td>
+        <td>0.70–0.85</td>
+        <td>对话指令下结构较规律，命中率中等偏高</td>
+      </tr>
+      <tr>
+        <td>创意写作</td>
+        <td>0.40–0.65</td>
+        <td>高 temperature、多样性要求高，命中率低</td>
+      </tr>
+      <tr>
+        <td>数学推理（多步）</td>
+        <td>0.60–0.80</td>
+        <td>推理链结构规律但关键 token 难以预测</td>
+      </tr>
+      <tr>
+        <td>Greedy decoding (T=0)</td>
+        <td>~0.90+</td>
+        <td>确定性输出，draft 更容易命中</td>
+      </tr>
+    </table>
+
+    <div class="callout warn">
+      <strong>注意：α 对实际加速比的敏感性</strong>
+      当 γ=4 时：α=0.9 → 平均产出 3.8 tokens；α=0.6 → 平均产出 2.1 tokens；α=0.3 → 平均产出 1.3 tokens。加速比非线性下降，低 α 时 speculative decoding 几乎无收益。
+    </div>
+  </section>
+
+  <!-- ── 5. 场景分析 ──────────────────────────── -->
+  <section id="when-works">
+    <h2>5. 什么场景有效 vs 无效</h2>
+
+    <h3>有效的场景</h3>
+
+    <table>
+      <tr>
+        <th>场景</th>
+        <th>原因</th>
+        <th>预期加速</th>
+      </tr>
+      <tr>
+        <td>实时对话（batch=1–4）</td>
+        <td>Memory-bandwidth bound，每次前向浪费大量算力；draft 验证的"并行化"收益最大</td>
+        <td>2–3x latency reduction</td>
+      </tr>
+      <tr>
+        <td>代码补全（GitHub Copilot 类）</td>
+        <td>α 高（语法重复性强），小 draft 模型（如 7B→70B）命中率极好</td>
+        <td>2–4x</td>
+      </tr>
+      <tr>
+        <td>Greedy / low-temperature 生成</td>
+        <td>输出确定性强，draft 命中率高</td>
+        <td>2.5–3.5x</td>
+      </tr>
+      <tr>
+        <td>Prefix 固定的批量任务（小 batch）</td>
+        <td>KV cache 热，draft 开销低</td>
+        <td>1.5–2.5x</td>
+      </tr>
+      <tr>
+        <td>长序列生成（报告、文章）</td>
+        <td>大部分 token 是"可预测的填充"，draft 命中率高</td>
+        <td>1.5–2x</td>
+      </tr>
+    </table>
+
+    <h3>无效或有害的场景</h3>
+
+    <table>
+      <tr>
+        <th>场景</th>
+        <th>原因</th>
+        <th>建议</th>
+      </tr>
+      <tr>
+        <td>高并发批量推理（batch &gt; 32）</td>
+        <td>大 batch 下已经是 compute-bound，额外 draft 模型占用资源反而降低整体吞吐</td>
+        <td>关闭 speculative decoding，用 continuous batching 替代</td>
+      </tr>
+      <tr>
+        <td>高 temperature / top-p 创意生成</td>
+        <td>α 低（~0.4），每轮平均产出接近 1，加速比接近 0 甚至为负</td>
+        <td>考虑 n-gram draft 或直接 baseline</td>
+      </tr>
+      <tr>
+        <td>极短序列（&lt;20 tokens）</td>
+        <td>warm-up 开销（KV cache setup）占比高，speculative 收益不显著</td>
+        <td>不启用</td>
+      </tr>
+      <tr>
+        <td>内存资源紧张</td>
+        <td>Draft 模型额外占用 GPU 内存，可能导致 target 模型 KV cache 被压缩</td>
+        <td>使用 n-gram draft（无额外模型参数）</td>
+      </tr>
+      <tr>
+        <td>Draft 和 target 词表不同</td>
+        <td>需要对齐词表，实现复杂且可能引入误差</td>
+        <td>确保同 tokenizer；或用 EAGLE/Medusa 同架构 draft</td>
+      </tr>
+    </table>
+
+    <div class="callout key">
+      <strong>最大误区</strong>
+      很多人以为 speculative decoding 对所有推理场景都有效。事实上，它的核心假设是"带宽瓶颈 + 低并发 + draft 命中率高"。高并发服务场景中关闭 speculative decoding 往往是更好的选择。
+    </div>
+  </section>
+
+  <!-- ── 6. 主要变体 ──────────────────────────── -->
+  <section id="variants">
+    <h2>6. 主要变体：Medusa / EAGLE / n-gram / Self-Speculative</h2>
+
+    <div class="diagram-wrap">
+      <h4>各变体关系图</h4>
+      <div class="mermaid">
+graph TD
+    SD[Speculative Decoding<br/>Leviathan/Chen 2023]
+    SD --> EXT[External Draft Model<br/>独立小模型]
+    SD --> NGRAM[n-gram / Lookup<br/>无模型]
+    SD --> HEADS[Extra Draft Heads<br/>共享 backbone]
+    SD --> SELF[Self-Speculative<br/>层跳过]
+
+    EXT --> VLLM_EXT[vLLM: --speculative-model]
+    EXT --> TRT_EXT[TRT-LLM: draft_model config]
+    EXT --> HF_EXT[HF: assisted_generation]
+
+    NGRAM --> VLLM_NG[vLLM: --speculative-model=ngram]
+    NGRAM --> HF_NG[HF: PromptLookupDecoding]
+
+    HEADS --> MEDUSA[Medusa<br/>多头同时预测多个位置]
+    HEADS --> EAGLE[EAGLE / EAGLE-2<br/>自回归 draft head]
+    HEADS --> HYDRA[Hydra<br/>Medusa + 状态复用]
+
+    SELF --> LAYERSKIP[LayerSkip<br/>Meta 2024]
+    SELF --> EARLYEXIT[Early Exit<br/>条件计算]
+
+    style SD fill:#1f6feb,color:#fff
+    style MEDUSA fill:#388e3c,color:#fff
+    style EAGLE fill:#f57c00,color:#fff
+      </div>
+    </div>
+
+    <h3>External Draft Model（经典方案）</h3>
+    <p>使用独立的小语言模型作为 draft。例如用 Llama-3-8B draft Llama-3-70B，或用 CodeGemma-2B draft Gemma-7B。优点：实现简单，draft 模型可替换；缺点：占用额外 GPU 内存，词表必须匹配。</p>
+
+    <h3>Medusa（2024）</h3>
+    <p>Cai et al. 在 target 模型顶层加 K 个额外的预测头（Medusa heads），每个头负责预测未来第 i 个 token（i=1..K），所有头共享 target 模型的 backbone。推理时用 tree attention 并行验证多个候选路径。</p>
+    <ul>
+      <li><strong>优点：</strong>不需要单独的 draft 模型，内存开销小（heads 只有几百 MB）；tree attention 可以同时验证多个 token 路径，增大有效 γ</li>
+      <li><strong>缺点：</strong>需要微调 Medusa heads（数据依赖）；无法适配任意新模型；heads 间无自回归依赖，预测能力有限</li>
+    </ul>
+    <pre><code># Medusa heads: K heads on top of target LM backbone
+# During inference (simplified):
+hidden = target_model.get_last_hidden(input_ids)
+# head[0] predicts token at pos n+1, head[1] predicts n+2, etc.
+medusa_logits = [head(hidden) for head in medusa_heads]  # K × vocab
+# Build candidate tree, run tree attention verification
+candidates = build_tree(medusa_logits, top_k=5)
+accepted = target_model.tree_verify(candidates)  # parallel tree attn</code></pre>
+
+    <h3>EAGLE / EAGLE-2（2024）</h3>
+    <p>EAGLE（Extrapolation Algorithm for Greater Language-model Efficiency）是目前效果最好的 speculative decoding 方案之一。核心改进：draft head 是一个轻量的<strong>自回归 transformer layer</strong>，输入是 target 模型的 feature（hidden states），因此 draft 预测能充分利用大模型的语义表示，α 显著高于 Medusa。</p>
+    <ul>
+      <li>EAGLE-2 进一步引入 adaptive draft tree：根据每个候选 token 的置信度动态展开树，避免浪费验证次数</li>
+      <li>实测加速比：Vicuna-7B 上约 3x，Vicuna-33B 上约 3.5x（greedy decoding）</li>
+    </ul>
+
+    <h3>n-gram / Prompt Lookup Decoding</h3>
+    <p>最简单的 draft 策略：在已有输入（prompt）中查找与当前 context 末尾匹配的 n-gram，将其后续内容作为 draft token。不需要任何模型，几乎零开销。</p>
+    <ul>
+      <li>适合 prompt 与生成内容高度重叠的场景：如 RAG（生成引用原文）、文档摘要、代码注释生成</li>
+      <li>vLLM 通过 <code>--speculative-model=[ngram]</code> 启用；HuggingFace 通过 <code>PromptLookupDecodingLogitsProcessor</code> 实现</li>
+    </ul>
+
+    <h3>LayerSkip（Meta 2024）</h3>
+    <p>Self-speculative decoding 的代表：用目标模型的前 L' 层（Early Exit）生成 draft，再用完整 L 层验证。不需要额外模型，只需要 target 模型在训练时加入 early exit 正则化（Layer Dropout + 共享 LM Head）。对内存不足的场景特别友好。</p>
+  </section>
+
+  <!-- ── 7. 业界框架实现 ──────────────────────────── -->
+  <section id="implementations">
+    <h2>7. 业界主要框架实现</h2>
+
+    <table>
+      <tr>
+        <th>框架</th>
+        <th>版本支持</th>
+        <th>Draft 策略</th>
+        <th>特色</th>
+      </tr>
+      <tr>
+        <td>vLLM</td>
+        <td>v0.3.0+</td>
+        <td>External model, n-gram, Medusa, EAGLE, MLPSpeculator</td>
+        <td>异步 draft + 批量验证；与 PagedAttention 集成；统计 acceptance rate</td>
+      </tr>
+      <tr>
+        <td>TensorRT-LLM</td>
+        <td>0.7+</td>
+        <td>External draft model, Medusa, ReDrafter, EAGLE</td>
+        <td>CUDA kernel 级优化；draft/target 共用 KV cache buffer 设计</td>
+      </tr>
+      <tr>
+        <td>SGLang</td>
+        <td>v0.2+</td>
+        <td>External model, EAGLE, Medusa</td>
+        <td>RadixAttention + speculative decoding 结合；prefix caching 感知</td>
+      </tr>
+      <tr>
+        <td>HuggingFace Transformers</td>
+        <td>4.39+</td>
+        <td>Assisted generation, Prompt Lookup, DoLa</td>
+        <td>简单易用，assisted_generation API；适合单卡实验</td>
+      </tr>
+      <tr>
+        <td>MLC-LLM</td>
+        <td>v0.1.1+</td>
+        <td>External model</td>
+        <td>跨平台（WebGPU, Metal, CUDA），适合端侧场景</td>
+      </tr>
+      <tr>
+        <td>OpenVINO / IPEX-LLM</td>
+        <td>2024.0+</td>
+        <td>Assisted generation</td>
+        <td>CPU/NPU 推理场景，draft 模型用 INT4 量化进一步降低开销</td>
+      </tr>
+    </table>
+
+    <h3>vLLM 实现深度解析</h3>
+    <p>vLLM 的 speculative decoding 实现位于 <code>vllm/spec_decode/</code> 目录，核心文件如下：</p>
+
+    <table>
+      <tr>
+        <th>文件</th>
+        <th>职责</th>
+      </tr>
+      <tr>
+        <td><code>spec_decode_worker.py</code></td>
+        <td>SpecDecodeWorker：协调 draft worker 和 target worker，管理 proposal 和 verification 循环</td>
+      </tr>
+      <tr>
+        <td><code>batch_expansion.py</code></td>
+        <td>BatchExpansionTop1Scorer：将 draft 生成的 proposals 展开成 target 模型的批次输入</td>
+      </tr>
+      <tr>
+        <td><code>metrics.py</code></td>
+        <td>记录 acceptance rate、系统吞吐等统计，用于监控和调优</td>
+      </tr>
+      <tr>
+        <td><code>top1_proposer.py</code></td>
+        <td>用单个 draft 模型生成 top-1 proposals（标准 speculative decoding）</td>
+      </tr>
+      <tr>
+        <td><code>ngram_worker.py</code></td>
+        <td>基于 n-gram lookup 的无模型 draft 方案</td>
+      </tr>
+      <tr>
+        <td><code>medusa_worker.py</code></td>
+        <td>Medusa heads draft，需要加载配套 head 权重</td>
+      </tr>
+      <tr>
+        <td><code>multi_step_worker.py</code></td>
+        <td>让 draft worker 执行多步前向，支持 pipeline parallelism 场景</td>
+      </tr>
+    </table>
+
+    <p>vLLM 的关键设计决策：</p>
+
+    <pre><code># vllm/spec_decode/spec_decode_worker.py (概念简化版)
+class SpecDecodeWorker:
+    def execute_model(self, execute_model_req):
+        # Step 1: Draft phase
+        proposals = self.proposer.get_spec_proposals(
+            execute_model_req, k=self.num_speculative_tokens)
+        # proposals: [batch_size, k] draft token ids + probs
+
+        # Step 2: Expand batch for target verification
+        # Each sequence becomes k+1 positions for target to verify in parallel
+        target_input = self.scorer.expand_batch(execute_model_req, proposals)
+
+        # Step 3: Target model forward (one pass, processes k+1 positions per seq)
+        target_logits = self.scorer.score_proposals(target_input, proposals)
+
+        # Step 4: Rejection sampling — produce accepted tokens
+        accepted_tokens, bonus_tokens = self.rejection_sampler.forward(
+            target_probs=target_logits.probs,
+            bonus_token_ids=target_logits.bonus_tokens,
+            draft_probs=proposals.probs,
+            draft_token_ids=proposals.token_ids,
+        )
+        return accepted_tokens</code></pre>
+
+    <h3>TensorRT-LLM 实现要点</h3>
+    <p>TRT-LLM 将 speculative decoding 分为两种引擎配置：</p>
+    <ul>
+      <li><strong>Draft-model mode：</strong>分别编译 draft engine 和 target engine，通过 runtime 层协调；draft engine 共享 target 的 KV cache pool 分配器，避免内存碎片</li>
+      <li><strong>Medusa mode：</strong>将 Medusa heads 融合进 target engine，通过 custom CUDA kernel 实现 tree attention（使用 causal mask 的变体，允许树形 attention 模式）</li>
+    </ul>
+    <p>关键 CUDA 优化：TRT-LLM 为 tree attention 实现了专用的 flash attention 变体，mask 不再是下三角矩阵而是树形 mask，需要修改 attention kernel 的 mask 生成逻辑（参见 <code>cpp/tensorrt_llm/kernels/speculativeDecoding/</code>）。</p>
+
+    <h3>HuggingFace Assisted Generation</h3>
+    <p>HuggingFace 的实现最为简洁，核心在 <code>generate_utils.py</code> 中的 <code>_assisted_decoding</code> 函数。使用示例：</p>
+
+    <pre><code>from transformers import AutoModelForCausalLM, AutoTokenizer
+
+# Load target and draft models
+target = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3-70B")
+draft  = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3-8B")
+
+# Speculative decoding via assisted_model parameter
+outputs = target.generate(
+    input_ids,
+    assistant_model=draft,
+    do_sample=True,
+    temperature=0.8,
+    max_new_tokens=200,
+    # HF automatically handles rejection sampling + correction
+)
+
+# n-gram / Prompt Lookup (no draft model needed)
+from transformers import PromptLookupDecodingLogitsProcessor
+proc = PromptLookupDecodingLogitsProcessor(num_speculative_tokens=5)
+outputs = target.generate(input_ids, logits_processor=[proc])</code></pre>
+
+    <div class="callout note">
+      <strong>HuggingFace 的 heuristic 调整</strong>
+      HuggingFace 实现了动态调整 γ（num_speculative_tokens）的逻辑：如果当前接受率较低，减少 γ 避免浪费；如果接受率高，增加 γ 以获得更多收益。这是实际部署中减少"bad case"影响的有效策略。
+    </div>
+  </section>
+
+  <!-- ── 8. 工程权衡 ──────────────────────────── -->
+  <section id="tradeoffs">
+    <h2>8. 工程权衡与实践建议</h2>
+
+    <h3>内存开销</h3>
+    <p>External draft model 需要额外加载到 GPU 内存。以 Llama-3 系列为例：</p>
+    <table>
+      <tr>
+        <th>组合</th>
+        <th>Draft 内存</th>
+        <th>总内存需求</th>
+        <th>推荐硬件</th>
+      </tr>
+      <tr>
+        <td>Llama-3-8B → 70B</td>
+        <td>~16GB (BF16)</td>
+        <td>~156GB</td>
+        <td>2× H100 80GB</td>
+      </tr>
+      <tr>
+        <td>Medusa heads → 70B</td>
+        <td>~200MB</td>
+        <td>~140GB</td>
+        <td>2× H100 80GB</td>
+      </tr>
+      <tr>
+        <td>n-gram → 70B</td>
+        <td>0</td>
+        <td>~140GB</td>
+        <td>2× H100 80GB</td>
+      </tr>
+      <tr>
+        <td>Llama-3-1B → 8B</td>
+        <td>~2GB (BF16)</td>
+        <td>~18GB</td>
+        <td>1× A10G 24GB</td>
+      </tr>
+    </table>
+
+    <h3>KV Cache 管理复杂性</h3>
+    <p>Speculative decoding 引入了 KV cache 管理的新挑战：</p>
+    <ul>
+      <li>Draft model 生成的 token 序列是"临时性的"——如果被拒绝，对应的 KV cache entry 需要回滚</li>
+      <li>vLLM 通过 block table 的"provisional blocks"机制处理这个问题：draft token 对应的 block 先标记为 provisional，验证通过后才转为 committed</li>
+      <li>tree attention（Medusa/EAGLE）更复杂：多条候选路径共享前缀的 KV，需要 tree 结构的 KV cache，实现难度远高于线性序列</li>
+    </ul>
+
+    <h3>Chunked Prefill 与 Speculative Decoding 的冲突</h3>
+    <p>vLLM 的 chunked prefill 和 speculative decoding 在 v0.5 之前无法同时启用——chunked prefill 会将 prefill 和 decode 混在同一 batch，破坏了 speculative decoding 假设的"纯 decode 阶段"。vLLM v0.6+ 通过异步 speculative decoding 机制解决了这个问题。</p>
+
+    <h3>实践建议：如何决定是否启用 Speculative Decoding</h3>
+
+    <div class="diagram-wrap">
+      <h4>决策流程</h4>
+      <div class="mermaid">
+flowchart TD
+    A[要启用 Speculative Decoding?] --> B{并发请求数?}
+    B -->|batch > 32| C[❌ 不推荐<br/>compute-bound，无收益]
+    B -->|batch ≤ 32| D{生成 temperature?}
+    D -->|T > 0.9 高随机| E[❌ α 很低<br/>考虑 n-gram 或放弃]
+    D -->|T ≤ 0.9 中低温| F{场景类型?}
+    F -->|代码补全/摘要/RAG| G{内存够吗?}
+    F -->|创意写作/open-ended| H[⚠️ 谨慎<br/>测量 α 后决定]
+    G -->|有余量 ≥ 16GB| I[✅ External Draft Model<br/>如 8B→70B]
+    G -->|内存紧张| J{prompt 内容重复性?}
+    J -->|高重复 如RAG| K[✅ n-gram Draft<br/>零内存开销]
+    J -->|低重复| L[✅ Medusa/EAGLE Heads<br/>~200MB 额外内存]
+
+    style C fill:#f85149,color:#fff
+    style E fill:#f85149,color:#fff
+    style I fill:#3fb950,color:#fff
+    style K fill:#3fb950,color:#fff
+    style L fill:#3fb950,color:#fff
+    style H fill:#d29922,color:#fff
+      </div>
+    </div>
+
+    <h3>监控哪些指标</h3>
+    <p>启用 speculative decoding 后，应持续监控：</p>
+    <ul>
+      <li><strong>acceptance_rate（α）：</strong>低于 0.5 说明 draft 模型不匹配，应考虑换 draft 或关闭功能</li>
+      <li><strong>mean_accepted_tokens：</strong>应接近 γ×α，如果与理论值偏差大，检查实现是否有 bug</li>
+      <li><strong>actual speedup vs baseline：</strong>用 end-to-end latency 衡量，警惕"理论加速 2x 但实际只有 1.2x"的情况（往往是 draft 模型开销被低估）</li>
+      <li><strong>GPU memory usage：</strong>Draft 模型是否压缩了 KV cache 空间，导致更多 cache eviction</li>
+    </ul>
+  </section>
+
+  <!-- ── 9. Takeaways ──────────────────────────── -->
+  <section id="takeaways">
+    <h2>9. Takeaways</h2>
+
+    <h3>什么是 Speculative Decoding 真正聪明的地方</h3>
+    <p>它的精妙不在于"用小模型猜"，而在于<strong>修正拒绝采样（Modified Rejection Sampling）</strong>保证了数学等价性。这让它成为一种可以安全部署的无损加速方案——不像量化或蒸馏，你不需要重新评估质量影响。</p>
+
+    <h3>它解决的本质问题</h3>
+    <p>Autoregressive decoding 的根本瓶颈是"每步只产出 1 token 但要读取全部参数"。Speculative decoding 用并行验证把这个比值提高到"每次大模型前向产出 1~γ+1 个 token"，本质是提高了模型参数的计算复用率。</p>
+
+    <h3>它的局限性</h3>
+    <ul>
+      <li>需要一个合适的 draft 模型（或 Medusa/EAGLE heads），选型本身是额外工程工作</li>
+      <li>加速比对 α 极度敏感，生产环境需要持续监控</li>
+      <li>高并发场景下完全失效，会降低整体吞吐</li>
+      <li>Speculative decoding + continuous batching 的组合实现复杂，各框架成熟度不一</li>
+      <li>多 GPU tensor parallel 场景下，draft 模型的通信开销会进一步蚕食收益</li>
+    </ul>
+
+    <h3>业界应用现状（截至 2025-2026）</h3>
+    <ul>
+      <li>Google 在 Gemini serving 中使用自家的 speculative decoding 方案，据报告 latency 显著降低</li>
+      <li>Meta 发布了 LayerSkip（ICLR 2024），提供了自推测解码的开源实现</li>
+      <li>NVIDIA 在 TRT-LLM 中将 speculative decoding 作为一等公民特性支持，并在 Hopper GPU 上针对 tree attention 做了专项优化</li>
+      <li>vLLM 社区持续改进，已支持 EAGLE-2，且与 prefix caching 的集成正在进行中</li>
+      <li>实际生产中最常见的部署是：小 batch 实时对话服务 + external draft model（n-gram 作为 fallback）</li>
+    </ul>
+
+    <h3>未来方向</h3>
+    <ul>
+      <li><strong>Draft 质量提升：</strong>EAGLE-2 的 adaptive tree 方向是正确的；基于强化学习训练 draft 模型（奖励为 acceptance rate）是有前景的方向</li>
+      <li><strong>与其他加速技术融合：</strong>speculative decoding + prefix caching + continuous batching 的三合一实现是业界正在攻克的硬工程问题</li>
+      <li><strong>多模态扩展：</strong>VLM 场景中 image token 通常是重复的，n-gram draft 天然适合；但 visual draft model 的设计尚未成熟</li>
+    </ul>
+  </section>
+
+  <!-- ── References ──────────────────────────────── -->
+  <section id="refs" class="refs">
+    <h2>References</h2>
+    <ol>
+      <li>Leviathan, Y. et al. "Fast Inference from Transformers via Speculative Decoding." <em>ICML 2023</em>. arXiv:2211.17192</li>
+      <li>Chen, C. et al. "Accelerating Large Language Model Decoding with Speculative Sampling." arXiv:2302.01318, Google DeepMind, 2023.</li>
+      <li>Cai, T. et al. "Medusa: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads." arXiv:2401.10774, 2024.</li>
+      <li>Li, Y. et al. "EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty." arXiv:2401.15077, 2024.</li>
+      <li>Li, Y. et al. "EAGLE-2: Faster Inference of Language Models with Dynamic Draft Trees." arXiv:2406.16858, 2024.</li>
+      <li>Elhoushi, M. et al. "LayerSkip: Enabling Early Exit Inference and Self-Speculative Decoding." <em>ACL 2024</em>. arXiv:2404.16710, Meta, 2024.</li>
+      <li>Saxena, A. "Prompt Lookup Decoding." <a href="https://github.com/apoorvumang/prompt-lookup-decoding">github.com/apoorvumang/prompt-lookup-decoding</a>, 2023.</li>
+      <li>vLLM Speculative Decoding docs. <a href="https://docs.vllm.ai/en/latest/features/spec_decode.html">docs.vllm.ai/en/latest/features/spec_decode.html</a></li>
+      <li>NVIDIA TensorRT-LLM Speculative Decoding. <a href="https://github.com/NVIDIA/TensorRT-LLM/blob/main/docs/source/speculative_decoding.md">TensorRT-LLM/speculative_decoding.md</a></li>
+      <li>HuggingFace Assisted Generation Blog. <a href="https://huggingface.co/blog/assisted-generation">huggingface.co/blog/assisted-generation</a></li>
+      <li>Miao, X. et al. "SpecInfer: Accelerating Large Language Model Serving with Tree-based Speculative Inference and Verification." arXiv:2305.09781, 2023.</li>
+    </ol>
+  </section>
+
+  <footer class="report-footer">
+    <span>CJ-Note · LLM Inference Research</span>
+    <span>Generated 2026-04-10</span>
+  </footer>
+</div>
+
+<script>
+  // Initialize Mermaid with dark theme
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      background: '#161b22',
+      primaryColor: '#1f6feb',
+      primaryTextColor: '#e6edf3',
+      lineColor: '#8b949e',
+      secondaryColor: '#388e3c',
+      tertiaryColor: '#f57c00'
+    }
+  });
+
+  // Chart 1: Theoretical Speedup vs Acceptance Rate
+  const ctx1 = document.getElementById('speedupChart');
+  if (ctx1) {
+    const alphas = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99];
+    const gamma = 4;
+    const tRatio = 0.1; // T_draft / T_big
+    const speedups = alphas.map(a => {
+      const avgAccepted = (1 - Math.pow(a, gamma + 1)) / (1 - a);
+      return (avgAccepted / (1 + tRatio * gamma)).toFixed(2);
+    });
+    new Chart(ctx1, {
+      type: 'line',
+      data: {
+        labels: alphas.map(a => (a * 100).toFixed(0) + '%'),
+        datasets: [{
+          label: 'Theoretical Speedup (γ=4, T_draft/T_big=0.1)',
+          data: speedups,
+          borderColor: '#58a6ff',
+          backgroundColor: 'rgba(88,166,255,0.1)',
+          fill: true,
+          tension: 0.3,
+          pointBackgroundColor: '#58a6ff',
+          pointRadius: 5
+        }, {
+          label: 'Baseline (no speculative)',
+          data: alphas.map(() => 1.0),
+          borderColor: '#f85149',
+          borderDash: [6, 3],
+          pointRadius: 0
+        }]
+      },
+      options: {
+        plugins: {
+          legend: { labels: { color: '#8b949e' } },
+          tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + ctx.raw + 'x' } }
+        },
+        scales: {
+          x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' },
+               title: { display: true, text: 'Acceptance Rate α', color: '#8b949e' } },
+          y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' },
+               title: { display: true, text: 'Speedup', color: '#8b949e' },
+               min: 0, max: 5 }
+        }
+      }
+    });
+  }
+
+  // Chart 2: Expected tokens per round for different γ values
+  const ctx2 = document.getElementById('tokensChart');
+  if (ctx2) {
+    const alphas2 = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99];
+    const gammas = [2, 4, 6, 8];
+    const colors = ['#d29922', '#58a6ff', '#3fb950', '#f85149'];
+
+    const datasets = gammas.map((g, i) => ({
+      label: `γ = ${g}`,
+      data: alphas2.map(a => ((1 - Math.pow(a, g + 1)) / (1 - a)).toFixed(2)),
+      borderColor: colors[i],
+      backgroundColor: 'transparent',
+      tension: 0.3,
+      pointRadius: 4,
+      pointBackgroundColor: colors[i]
+    }));
+
+    new Chart(ctx2, {
+      type: 'line',
+      data: {
+        labels: alphas2.map(a => (a * 100).toFixed(0) + '%'),
+        datasets
+      },
+      options: {
+        plugins: { legend: { labels: { color: '#8b949e' } } },
+        scales: {
+          x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' },
+               title: { display: true, text: 'Acceptance Rate α', color: '#8b949e' } },
+          y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' },
+               title: { display: true, text: 'E[Accepted Tokens per Round]', color: '#8b949e' },
+               min: 1 }
+        }
+      }
+    });
+  }
+</script>
+</body>
+</html>

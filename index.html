@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CJ-Note — LLM Inference Research Notes</title>
+  <style>
+    :root { --bg: #0d1117; --surface: #161b22; --border: #30363d;
+            --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+            --green: #3fb950; --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font-sans);
+           line-height: 1.6; min-height: 100vh; }
+
+    /* Site header */
+    .site-header { background: var(--surface); border-bottom: 1px solid var(--border);
+                   padding: 1.5rem 2rem; display: flex; align-items: center;
+                   justify-content: space-between; }
+    .site-title { font-size: 1.4rem; font-weight: 700; color: var(--accent);
+                  letter-spacing: -.02em; }
+    .site-title span { color: var(--muted); font-weight: 400; }
+    .site-header nav a { color: var(--muted); text-decoration: none; font-size: .9rem;
+                         margin-left: 1.5rem; }
+    .site-header nav a:hover { color: var(--accent); }
+
+    .page-wrap { max-width: 900px; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
+
+    /* Hero */
+    .hero { margin-bottom: 2.5rem; }
+    .hero h2 { font-size: 1.5rem; color: var(--text); margin-bottom: .6rem; }
+    .hero p { color: var(--muted); max-width: 600px; }
+
+    /* Stats bar */
+    .stats { display: flex; gap: 2rem; margin: 1.5rem 0 2rem;
+             padding: 1rem 1.2rem; background: var(--surface);
+             border: 1px solid var(--border); border-radius: 8px; flex-wrap: wrap; }
+    .stat .num { font-size: 1.6rem; font-weight: 700; color: var(--accent); }
+    .stat .lbl { font-size: .75rem; color: var(--muted); text-transform: uppercase;
+                 letter-spacing: .05em; }
+
+    /* Filter tags */
+    .filters { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+    .tag { background: var(--surface); border: 1px solid var(--border); border-radius: 20px;
+           padding: .3rem .8rem; font-size: .8rem; color: var(--muted); cursor: pointer;
+           transition: all .15s; }
+    .tag:hover, .tag.active { background: var(--accent); color: #0d1117;
+                               border-color: var(--accent); font-weight: 600; }
+
+    /* Report cards */
+    .report-list { display: flex; flex-direction: column; gap: .75rem; }
+    .report-card { background: var(--surface); border: 1px solid var(--border);
+                   border-radius: 8px; padding: 1rem 1.2rem;
+                   display: flex; align-items: flex-start; gap: 1rem;
+                   text-decoration: none; transition: border-color .15s; }
+    .report-card:hover { border-color: var(--accent); }
+    .report-icon { font-size: 1.3rem; flex-shrink: 0; margin-top: .1rem; }
+    .report-info { flex: 1; }
+    .report-title { color: var(--text); font-weight: 600; margin-bottom: .25rem; }
+    .report-card:hover .report-title { color: var(--accent); }
+    .report-meta { font-size: .8rem; color: var(--muted); display: flex; gap: 1rem; }
+    .report-tags { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: .4rem; }
+    .rtag { background: rgba(88,166,255,.1); color: var(--accent); border-radius: 4px;
+            padding: .1rem .5rem; font-size: .75rem; }
+
+    /* Footer */
+    .site-footer { text-align: center; padding: 2rem; color: var(--muted); font-size: .8rem;
+                   border-top: 1px solid var(--border); }
+  </style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-title">CJ-Note <span>/ LLM Inference</span></div>
+  <nav>
+    <a href="https://github.com/rainyfly/CJ-Note" target="_blank">GitHub</a>
+  </nav>
+</header>
+
+<div class="page-wrap">
+  <div class="hero">
+    <h2>LLM Inference Research Notes</h2>
+    <p>Personal notes on LLM inference systems — architecture analysis, paper reading, and feature deep dives.
+       Topics: scheduling, memory management, attention kernels, quantization, speculative decoding, and more.</p>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="num" id="total-count">0</div><div class="lbl">Reports</div></div>
+    <div class="stat"><div class="num" id="last-updated">—</div><div class="lbl">Last Updated</div></div>
+  </div>
+
+  <div class="filters" id="filter-bar">
+    <span class="tag active" data-filter="all">All</span>
+    <span class="tag" data-filter="repo">Repo Analysis</span>
+    <span class="tag" data-filter="paper">Paper Reading</span>
+    <span class="tag" data-filter="feature">Feature Deep Dive</span>
+  </div>
+
+  <div class="report-list" id="report-list">
+    <!-- reports injected by JS below -->
+  </div>
+</div>
+
+<footer class="site-footer">
+  CJ-Note · Built with Claude · <a href="https://github.com/rainyfly/CJ-Note" style="color:#58a6ff">GitHub</a>
+</footer>
+
+<script>
+// ── Report Registry ──────────────────────────────────────────
+// Add new entries here (prepend so newest is first)
+const REPORTS = [
+  {
+    title: "Speculative Decoding Deep Dive",
+    file: "reports/speculative-decoding-deep-dive.html",
+    type: "feature",
+    date: "2026-04-10",
+    tags: ["Speculative Decoding", "Latency", "Draft Model", "vLLM", "TRT-LLM"],
+    desc: "Draft model + verification 机制详解，接受采样等价性证明，有效/无效场景分析，vLLM/TRT-LLM/HuggingFace 实现对比，以及 Medusa/EAGLE/n-gram 变体介绍。"
+  },
+  {
+    title: "vLLM 调度架构深度解析：Continuous Batching 与 PagedAttention",
+    file: "reports/vllm-scheduling-architecture.html",
+    type: "repo",
+    date: "2026-04-10",
+    tags: ["Scheduling", "KV Cache", "PagedAttention", "Continuous Batching"],
+    desc: "深入分析 vLLM 如何通过 PagedAttention（OS 式分页内存管理）和迭代级调度实现 2-24x 吞吐量提升，涵盖调度器状态机、Block Manager 实现、swap/preempt 策略及 v1 架构重构要点。"
+  },
+  {
+    title: "Flash Attention 2 论文研读",
+    file: "reports/flash-attention-2.html",
+    type: "paper",
+    date: "2026-04-10",
+    tags: ["Attention", "GPU Kernel", "Parallelism", "Memory Efficiency"],
+    desc: "深入解析 FA2 相比 FA1 的算法改进：减少非 matmul 运算、序列维度并行、warp 工作划分优化、causal mask skip，以及 MQA/GQA 原生支持。"
+  },
+];
+
+// ── Render ────────────────────────────────────────────────────
+const ICONS = { repo: "🏗️", paper: "📄", feature: "⚡" };
+const TYPE_LABELS = { repo: "Repo Analysis", paper: "Paper Reading", feature: "Feature Deep Dive" };
+
+function render(filter = "all") {
+  const list = document.getElementById("report-list");
+  const shown = filter === "all" ? REPORTS : REPORTS.filter(r => r.type === filter);
+
+  if (shown.length === 0) {
+    list.innerHTML = '<p style="color:var(--muted);padding:2rem 0;text-align:center">No reports yet — check back soon.</p>';
+    return;
+  }
+
+  list.innerHTML = shown.map(r => `
+    <a class="report-card" href="${r.file}">
+      <div class="report-icon">${ICONS[r.type] || "📝"}</div>
+      <div class="report-info">
+        <div class="report-title">${r.title}</div>
+        <div class="report-meta">
+          <span>${TYPE_LABELS[r.type]}</span>
+          <span>${r.date}</span>
+        </div>
+        ${r.desc ? `<p style="font-size:.85rem;color:var(--muted);margin-top:.3rem">${r.desc}</p>` : ""}
+        <div class="report-tags">${(r.tags||[]).map(t=>`<span class="rtag">${t}</span>`).join("")}</div>
+      </div>
+    </a>`).join("");
+}
+
+// Stats
+document.getElementById("total-count").textContent = REPORTS.length;
+if (REPORTS.length > 0) {
+  document.getElementById("last-updated").textContent =
+    REPORTS.slice().sort((a,b)=>b.date.localeCompare(a.date))[0].date;
+}
+
+// Filter logic
+document.querySelectorAll(".tag").forEach(t => {
+  t.addEventListener("click", () => {
+    document.querySelectorAll(".tag").forEach(x=>x.classList.remove("active"));
+    t.classList.add("active");
+    render(t.dataset.filter);
+  });
+});
+
+render();
+</script>
+</body>
+</html>
