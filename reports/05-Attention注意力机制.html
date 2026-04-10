@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang Attention 注意力机制深度解析">
+  <meta name="report-type"  content="repo">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang Attention 注意力机制深度解析">
+  <meta name="report-type"  content="sglang">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+<title>SGLang Attention 注意力机制深度解析</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}:root{--bg:#0d1117;--bg2:#161b22;--bg3:#1c2128;--border:#30363d;--text:#e6edf3;--text2:#8b949e;--text3:#656d76;--cyan:#39d0d8;--blue:#58a6ff;--green:#3fb950;--yellow:#e3b341;--orange:#f78166;--purple:#bc8cff;--red:#f85149;--font-mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace}html{scroll-behavior:smooth}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif;background:var(--bg);color:var(--text);line-height:1.75;font-size:16px}.page-wrap{display:grid;grid-template-columns:260px 1fr;min-height:100vh}@media(max-width:900px){.page-wrap{grid-template-columns:1fr}.sidebar{display:none}}.sidebar{position:sticky;top:0;height:100vh;overflow-y:auto;background:var(--bg2);border-right:1px solid var(--border);padding:24px 16px}.sidebar-brand{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:16px}.toc a{display:block;padding:6px 8px;font-size:13px;color:var(--text2);text-decoration:none;border-radius:6px;margin-bottom:2px}.toc a:hover{background:var(--bg3);color:var(--cyan)}main{max-width:960px;margin:0 auto;padding:48px 32px}h1{font-size:2.2rem;margin-bottom:8px;background:linear-gradient(135deg,var(--cyan),var(--blue));-webkit-background-clip:text;-webkit-text-fill-color:transparent}.subtitle{color:var(--text2);font-size:1rem;margin-bottom:40px}h2{font-size:1.5rem;color:var(--cyan);margin:48px 0 16px;padding-bottom:8px;border-bottom:1px solid var(--border)}h3{font-size:1.15rem;color:var(--blue);margin:32px 0 12px}h4{font-size:1rem;color:var(--purple);margin:24px 0 8px}p,li{margin-bottom:12px}ul,ol{padding-left:24px}a{color:var(--blue);text-decoration:none}.card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px;margin:16px 0}table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px}th,td{padding:10px 14px;text-align:left;border:1px solid var(--border)}th{background:var(--bg3);color:var(--cyan)}td{background:var(--bg2)}code{font-family:var(--font-mono);background:var(--bg3);padding:2px 6px;border-radius:4px;font-size:0.9em;color:var(--orange)}pre{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:16px;overflow-x:auto;margin:16px 0;font-size:13px}pre code{background:none;padding:0;color:var(--text)}.mermaid{background:var(--bg2);border-radius:12px;padding:20px;margin:16px 0;display:flex;justify-content:center}.highlight{background:rgba(57,208,216,0.08);border-left:3px solid var(--cyan);padding:16px 20px;border-radius:0 8px 8px 0;margin:16px 0}
+</style>
+</head>
+<body>
+<div class="page-wrap">
+<nav class="sidebar">
+<div class="sidebar-brand">SGLang Research</div>
+<div class="toc">
+<a href="#overview">1. 系统总览</a>
+<a href="#registry">2. 后端注册表</a>
+<a href="#base-backend">3. 基类设计</a>
+<a href="#radix-attn">4. RadixAttention</a>
+<a href="#flashinfer">5. FlashInfer 后端</a>
+<a href="#triton">6. Triton 后端</a>
+<a href="#flashattn">7. FlashAttention 后端</a>
+<a href="#flashmla">8. FlashMLA 后端</a>
+<a href="#paged-attn">9. 分页注意力</a>
+<a href="#dp-attn">10. DP Attention</a>
+<a href="#hybrid">11. 混合后端</a>
+<a href="#summary">12. 总结</a>
+</div>
+</nav>
+<main>
+
+<h1>SGLang Attention 注意力机制</h1>
+<p class="subtitle">深入分析注意力后端注册表、FlashInfer/FlashAttention/Triton/MLA 后端、分页注意力与 DP Attention 机制</p>
+
+<h2 id="overview">1. 系统总览</h2>
+<p>SGLang 的注意力系统采用可插拔的后端架构，通过注册表模式支持 15+ 种注意力后端实现。</p>
+<div class="card">
+<table>
+<tr><th>文件</th><th>核心类/函数</th><th>职责</th></tr>
+<tr><td>attention_registry.py</td><td><code>ATTENTION_BACKENDS</code></td><td>后端注册表和工厂函数</td></tr>
+<tr><td>base_attn_backend.py</td><td><code>AttentionBackend</code></td><td>注意力后端抽象基类</td></tr>
+<tr><td>radix_attention.py</td><td><code>RadixAttention</code></td><td>注意力层 nn.Module 实现</td></tr>
+<tr><td>flashinfer_backend.py</td><td><code>FlashInferAttnBackend</code></td><td>FlashInfer 高性能后端</td></tr>
+<tr><td>triton_backend.py</td><td><code>TritonAttnBackend</code></td><td>Triton 自定义后端</td></tr>
+<tr><td>flashattention_backend.py</td><td><code>FlashAttentionBackend</code></td><td>FlashAttention v3/v4 后端</td></tr>
+<tr><td>flashmla_backend.py</td><td><code>FlashMLABackend</code></td><td>FlashMLA 专用后端</td></tr>
+</table>
+</div>
+
+<h2 id="registry">2. 后端注册表</h2>
+<p>通过 <code>@register_attention_backend</code> 装饰器注册后端工厂函数。</p>
+<div class="mermaid">
+graph TB
+    REG["ATTENTION_BACKENDS 字典"] --> FI["flashinfer<br/>FlashInfer / FlashInferMLA"]
+    REG --> TR["triton<br/>Triton / DoubleSparse"]
+    REG --> FA3["fa3<br/>FlashAttention v3"]
+    REG --> FA4["fa4<br/>FlashAttention v4"]
+    REG --> FML["flashmla<br/>FlashMLA"]
+    REG --> CML["cutlass_mla<br/>CutlassMLA"]
+    REG --> TML["trtllm_mla<br/>TensorRT-LLM MLA"]
+    REG --> TMH["trtllm_mha<br/>TensorRT-LLM MHA"]
+    REG --> AI["aiter<br/>Aiter (AMD)"]
+    REG --> WV["wave<br/>Wave"]
+    REG --> ASC["ascend<br/>Ascend (NPU)"]
+    REG --> NSA["nsa<br/>Native Sparse Attn"]
+    REG --> TN["torch_native<br/>PyTorch 原生"]
+    REG --> FX["flex_attention<br/>torch.flex"]
+    REG --> IAX["intel_amx<br/>Intel AMX"]
+    REG --> DC["dual_chunk_flash_attn<br/>双块注意力"]
+    style REG fill:#39d0d8,color:#0d1117
+</div>
+
+<h3>2.1 注册机制</h3>
+<pre><code>ATTENTION_BACKENDS = {}
+
+def register_attention_backend(name):
+    def decorator(fn):
+        ATTENTION_BACKENDS[name] = fn
+        return fn
+    return decorator
+
+@register_attention_backend("flashinfer")
+def create_flashinfer_backend(runner):
+    if not runner.use_mla_backend:
+        return FlashInferAttnBackend(runner)
+    else:
+        return FlashInferMLAAttnBackend(runner)</code></pre>
+
+<h3>2.2 后端选择逻辑</h3>
+<div class="mermaid">
+flowchart TD
+    A["ModelRunner 初始化"] --> B{"attention_backend 参数"}
+    B --> C["ATTENTION_BACKENDS[name](runner)"]
+    C --> D["attn_backend_wrapper(runner, backend)"]
+    D --> E{"是否为混合模型?"}
+    E -->|"hybrid GDN"| F["GDNAttnBackend 包装"]
+    E -->|"Mamba2"| G["Mamba2AttnBackend 包装"]
+    E -->|"KimiLinear"| H["KimiLinearAttnBackend 包装"]
+    E -->|否| I["直接使用原后端"]
+    style A fill:#39d0d8,color:#0d1117
+</div>
+
+<h2 id="base-backend">3. 基类设计 (AttentionBackend)</h2>
+<p><code>AttentionBackend</code> 是所有注意力后端的抽象基类，定义了统一接口。</p>
+
+<h3>3.1 核心抽象方法</h3>
+<table>
+<tr><th>方法</th><th>描述</th></tr>
+<tr><td><code>init_forward_metadata(batch)</code></td><td>初始化前向传播元数据(indptr、indices等)</td></tr>
+<tr><td><code>init_cuda_graph_state(max_bs, max_num_tokens)</code></td><td>初始化 CUDA Graph 的全局共享状态</td></tr>
+<tr><td><code>init_forward_metadata_capture_cuda_graph(...)</code></td><td>图捕获时初始化元数据</td></tr>
+<tr><td><code>init_forward_metadata_replay_cuda_graph(...)</code></td><td>图回放时初始化元数据</td></tr>
+<tr><td><code>forward_decode(q, k, v, layer, batch)</code></td><td>Decode 阶段前向</td></tr>
+<tr><td><code>forward_extend(q, k, v, layer, batch)</code></td><td>Extend(prefill) 阶段前向</td></tr>
+<tr><td><code>get_cuda_graph_seq_len_fill_value()</code></td><td>获取 padding 时的 seq_len 填充值</td></tr>
+</table>
+
+<h3>3.2 forward 分发逻辑</h3>
+<pre><code>def forward(self, q, k, v, layer, forward_batch, save_kv_cache=True):
+    if forward_batch.forward_mode.is_idle():
+        return q.new_empty(q.shape[0], layer.tp_q_head_num * layer.v_head_dim)
+    elif forward_batch.forward_mode.is_decode():
+        return self.forward_decode(q, k, v, layer, forward_batch, ...)
+    else:
+        return self.forward_extend(q, k, v, layer, forward_batch, ...)</code></pre>
+
+<h2 id="radix-attn">4. RadixAttention</h2>
+<p><code>RadixAttention</code> 是 SGLang 中实际嵌入到模型结构中的 <code>nn.Module</code>。</p>
+
+<div class="mermaid">
+classDiagram
+    class RadixAttention {
+        +tp_q_head_num: int
+        +tp_k_head_num: int
+        +head_dim: int
+        +v_head_dim: int
+        +scaling: float
+        +layer_id: int
+        +logit_cap: float
+        +sliding_window_size: int
+        +is_cross_attention: bool
+        +attn_type: AttentionType
+        +forward(q, k, v, batch) Tensor
+    }
+    class AttentionType {
+        DECODER
+        ENCODER_ONLY
+    }
+    RadixAttention --> AttentionType
+</div>
+
+<h3>4.1 forward 流程</h3>
+<div class="mermaid">
+flowchart TD
+    A["RadixAttention.forward(q, k, v, batch)"] --> B["获取 forward_context"]
+    B --> C["attn_backend = batch.attn_backend"]
+    C --> D["attn_backend.forward(q, k, v, self, batch)"]
+    D --> E{"后端分发"}
+    E -->|decode| F["forward_decode<br/>保存KV + decode kernel"]
+    E -->|extend| G["forward_extend<br/>保存KV + prefill kernel"]
+    F --> H["输出 [num_tokens, heads * v_dim]"]
+    G --> H
+    style A fill:#39d0d8,color:#0d1117
+    style D fill:#58a6ff,color:#0d1117
+</div>
+
+<h3>4.2 关键属性</h3>
+<table>
+<tr><th>属性</th><th>描述</th></tr>
+<tr><td><code>tp_q_head_num</code></td><td>当前 TP 分片的 Query 头数</td></tr>
+<tr><td><code>tp_k_head_num</code></td><td>当前 TP 分片的 Key 头数</td></tr>
+<tr><td><code>head_dim / v_head_dim</code></td><td>QK 头维度 / V 头维度(MLA 可能不同)</td></tr>
+<tr><td><code>layer_id</code></td><td>当前层编号(用于选择 KV 缓存切片)</td></tr>
+<tr><td><code>sliding_window_size</code></td><td>滑动窗口大小(-1 表示全注意力)</td></tr>
+<tr><td><code>k_scale / v_scale</code></td><td>FP8 量化缩放因子</td></tr>
+</table>
+
+<h2 id="flashinfer">5. FlashInfer 后端</h2>
+<p>FlashInfer 是 SGLang 的默认注意力后端，提供高性能的 paged attention 实现。</p>
+
+<h3>5.1 核心组件</h3>
+<div class="mermaid">
+graph TB
+    FI["FlashInferAttnBackend"] --> DW["decode_wrappers<br/>BatchDecodeWithPagedKVCacheWrapper"]
+    FI --> PW["prefill_wrappers<br/>BatchPrefillWithPagedKVCacheWrapper"]
+    FI --> RW["ragged_wrapper<br/>BatchPrefillWithRaggedKVCacheWrapper"]
+    FI --> WS["global_workspace_buffer<br/>(全局工作空间)"]
+    FI --> PM["PrefillMetadata"]
+    FI --> DM["DecodeMetadata"]
+    style FI fill:#39d0d8,color:#0d1117
+</div>
+
+<h3>5.2 Wrapper 调度</h3>
+<table>
+<tr><th>Wrapper</th><th>用途</th><th>场景</th></tr>
+<tr><td><code>decode_wrappers[0]</code></td><td>标准 decode</td><td>所有 decode 请求</td></tr>
+<tr><td><code>decode_wrappers[1]</code></td><td>滑动窗口 decode</td><td>SWA 层的 decode</td></tr>
+<tr><td><code>decode_wrappers[2]</code></td><td>交叉注意力 decode</td><td>encoder-decoder 模型</td></tr>
+<tr><td><code>prefill_wrappers[0]</code></td><td>标准 prefill</td><td>所有 prefill 请求</td></tr>
+<tr><td><code>prefill_wrappers[1]</code></td><td>滑动窗口 prefill</td><td>SWA 层的 prefill</td></tr>
+<tr><td><code>prefill_wrappers[2]</code></td><td>交叉注意力 prefill</td><td>encoder-decoder 模型</td></tr>
+<tr><td><code>ragged_wrapper</code></td><td>Ragged prefill</td><td>无前缀缓存的 prefill</td></tr>
+</table>
+
+<h3>5.3 init_forward_metadata</h3>
+<div class="mermaid">
+flowchart TD
+    A["init_forward_metadata(batch)"] --> B{"forward_mode"}
+    B -->|decode/idle| C["创建 DecodeMetadata"]
+    C --> C1["计算 kv_indptr, kv_indices"]
+    C1 --> C2["fast_decode_plan() 或 wrapper.plan()"]
+    B -->|extend/mixed| D["创建 PrefillMetadata"]
+    D --> D1["计算 qo_indptr, kv_indptr, kv_indices"]
+    D1 --> D2{"extend_no_prefix?"}
+    D2 -->|是| D3["使用 ragged wrapper<br/>(无分页KV)"]
+    D2 -->|否| D4["使用 paged wrapper<br/>(有前缀KV)"]
+    style A fill:#39d0d8,color:#0d1117
+</div>
+
+<h3>5.4 Tensor Core Decode 优化</h3>
+<div class="highlight">
+<strong>decode_use_tensor_cores：</strong>当 KV 缓存使用 FP8 数据类型或 Q 头数 / KV 头数比 > 4 时，FlashInfer 自动切换到 Tensor Core 实现以获得更高性能。
+</div>
+
+<h2 id="triton">6. Triton 后端</h2>
+<p>Triton 后端使用自定义 Triton kernel 实现注意力计算，支持更灵活的定制。</p>
+
+<h3>6.1 核心实现</h3>
+<div class="card">
+<table>
+<tr><th>Kernel</th><th>文件</th><th>描述</th></tr>
+<tr><td><code>decode_attention_fwd</code></td><td>triton_ops/decode_attention.py</td><td>分页 KV 解码注意力</td></tr>
+<tr><td><code>extend_attention_fwd</code></td><td>triton_ops/extend_attention.py</td><td>扩展注意力(前缀+新token)</td></tr>
+<tr><td><code>extend_attention_fwd_unified</code></td><td>triton_ops/extend_attention.py</td><td>统一 KV indices 的扩展注意力</td></tr>
+<tr><td><code>prefill_attention_fwd</code></td><td>triton_ops/prefill_attention.py</td><td>纯 prefill 注意力</td></tr>
+</table>
+</div>
+
+<h3>6.2 ForwardMetadata 结构</h3>
+<pre><code>@dataclass
+class ForwardMetadata:
+    attn_logits: torch.Tensor      # 注意力 logits 缓冲区
+    attn_lse: torch.Tensor         # log-sum-exp 缓冲区
+    max_extend_len: int            # 最大扩展长度
+    num_kv_splits: torch.Tensor    # KV 分割数
+    kv_indptr: torch.Tensor        # KV 索引指针(CSR格式)
+    kv_indices: torch.Tensor       # KV 缓存索引
+    qo_indptr: torch.Tensor        # Query 索引指针
+    custom_mask: torch.Tensor      # 自定义注意力掩码
+    mask_indptr: torch.Tensor      # 掩码索引指针
+    # 滑动窗口相关
+    window_kv_indptr: torch.Tensor
+    window_kv_indices: torch.Tensor</code></pre>
+
+<h3>6.3 KV Split 机制</h3>
+<p>对于长序列的 decode，Triton 后端将 KV 缓存分割成多个 chunk 并行计算，然后合并：</p>
+<div class="mermaid">
+flowchart LR
+    KV["长 KV 缓存"] --> S1["Split 1"]
+    KV --> S2["Split 2"]
+    KV --> S3["Split N"]
+    S1 --> M["merge_state<br/>合并 logits + LSE"]
+    S2 --> M
+    S3 --> M
+    M --> O["最终注意力输出"]
+    style KV fill:#39d0d8,color:#0d1117
+    style M fill:#f78166,color:#0d1117
+</div>
+
+<h2 id="flashattn">7. FlashAttention 后端</h2>
+<p>支持 FlashAttention v3 (SM80+) 和 v4 (SM90+)，通过 <code>sgl_kernel</code> 调用。</p>
+
+<h3>7.1 FlashAttentionMetadata</h3>
+<table>
+<tr><th>字段</th><th>描述</th></tr>
+<tr><td><code>cache_seqlens_int32</code></td><td>KV 缓存序列长度</td></tr>
+<tr><td><code>cu_seqlens_q / cu_seqlens_k</code></td><td>Query/Key 的累积序列长度</td></tr>
+<tr><td><code>max_seq_len_q / max_seq_len_k</code></td><td>最大 Q/K 序列长度</td></tr>
+<tr><td><code>page_table</code></td><td>分页 KV 缓存的页表</td></tr>
+<tr><td><code>window_size</code></td><td>滑动窗口大小元组</td></tr>
+</table>
+
+<h3>7.2 Local Attention 支持</h3>
+<p>FlashAttention 后端支持 local attention（如 Gemma 的滑动窗口），通过 <code>LocalAttentionMetadata</code> 将长序列分割成虚拟 batch 项，每个 chunk 独立处理。</p>
+<div class="highlight">
+<strong>Local Attention 分块策略：</strong>对于 attn_chunk_size=4 的序列，q_seqlens=10 的请求会被分成多个虚拟 batch 项：每个项只关注自己 chunk 内和之前所有 chunk 的 KV。这在保持因果性的同时限制了每次注意力的范围。
+</div>
+
+<h2 id="flashmla">8. FlashMLA 后端</h2>
+<p>FlashMLA 是 DeepSeek 团队专为 MLA(Multi-head Latent Attention) 架构开发的高性能 kernel。</p>
+
+<h3>8.1 架构特点</h3>
+<div class="mermaid">
+graph TB
+    FML["FlashMLABackend"] -->|继承| FIM["FlashInferMLAAttnBackend"]
+    FIM -->|继承| AB["AttentionBackend"]
+
+    FML --> D["decode: flash_mla_with_kvcache"]
+    FML --> P["extend: 使用 FlashInfer MLA"]
+    FML --> M["get_mla_metadata() 计算分片"]
+
+    style FML fill:#39d0d8,color:#0d1117
+</div>
+
+<h3>8.2 MLA 特殊参数</h3>
+<table>
+<tr><th>参数</th><th>描述</th></tr>
+<tr><td><code>kv_lora_rank</code></td><td>KV 压缩后的低秩维度(如512)</td></tr>
+<tr><td><code>qk_nope_head_dim</code></td><td>无 RoPE 的 QK 头维度</td></tr>
+<tr><td><code>qk_rope_head_dim</code></td><td>带 RoPE 的 QK 头维度</td></tr>
+<tr><td><code>kv_cache_dim</code></td><td>= kv_lora_rank + qk_rope_head_dim</td></tr>
+<tr><td>PAGE_SIZE</td><td>固定为 64 (FlashMLA 硬编码)</td></tr>
+</table>
+
+<h3>8.3 FP8 KV 缓存支持</h3>
+<p>FlashMLA 支持 FP8 (e4m3fn / e5m2) 格式的 KV 缓存，通过 <code>scaled_fp8_quant</code> 在线量化 KV 值后存入缓存。</p>
+
+<h2 id="paged-attn">9. 分页注意力机制</h2>
+<p>SGLang 使用分页(paged) KV 缓存管理，核心数据结构为 CSR 格式的索引。</p>
+
+<h3>9.1 CSR 索引结构</h3>
+<div class="mermaid">
+graph TB
+    subgraph "CSR 格式"
+        IP["kv_indptr<br/>[0, 3, 7, 10]"] --> |"请求0: 3个token"| ID["kv_indices<br/>[p5,p2,p8, p1,p3,p7,p9, p0,p4,p6]"]
+        IP --> |"请求1: 4个token"| ID
+        IP --> |"请求2: 3个token"| ID
+    end
+    subgraph "物理 KV 缓存"
+        ID --> KV["token_to_kv_pool<br/>KV Cache [max_tokens, ...]"]
+    end
+    style IP fill:#39d0d8,color:#0d1117
+    style KV fill:#f78166,color:#0d1117
+</div>
+
+<h3>9.2 req_to_token 映射</h3>
+<pre><code># ReqToTokenPool: 请求 -> token 位置映射
+# req_to_token[req_pool_idx, :seq_len] = KV缓存中的位置索引
+# 这些索引是非连续的(来自分页分配器)</code></pre>
+
+<h3>9.3 create_flashinfer_kv_indices_triton</h3>
+<p>高性能的 Triton kernel 用于从 <code>req_to_token</code> 提取 KV indices：</p>
+<pre><code># 对每个请求，从 req_to_token[req_pool_idx, :] 中
+# 提取出有效的 KV 缓存位置索引，
+# 按 CSR 格式组织到 kv_indices 中</code></pre>
+
+<h2 id="dp-attn">10. DP Attention</h2>
+<p>数据并行注意力(DP Attention)允许多个 DP rank 共同处理注意力计算。</p>
+
+<h3>10.1 概念架构</h3>
+<div class="mermaid">
+graph TB
+    subgraph "DP Attention (dp_size=2, tp_size=4)"
+        subgraph "DP Rank 0"
+            TP0["Attn TP 0<br/>(Rank 0)"]
+            TP1["Attn TP 1<br/>(Rank 1)"]
+        end
+        subgraph "DP Rank 1"
+            TP2["Attn TP 2<br/>(Rank 2)"]
+            TP3["Attn TP 3<br/>(Rank 3)"]
+        end
+    end
+
+    TP0 ---|"AllReduce<br/>(MLP only)"| TP1
+    TP0 ---|"AllReduce<br/>(MLP only)"| TP2
+    TP0 ---|"AllReduce<br/>(MLP only)"| TP3
+
+    style TP0 fill:#39d0d8,color:#0d1117
+    style TP1 fill:#39d0d8,color:#0d1117
+    style TP2 fill:#58a6ff,color:#0d1117
+    style TP3 fill:#58a6ff,color:#0d1117
+</div>
+
+<h3>10.2 Padding 模式</h3>
+<table>
+<tr><th>DpPaddingMode</th><th>描述</th></tr>
+<tr><td><code>FULL_PADDING</code></td><td>所有 DP rank 填充到相同 token 数</td></tr>
+<tr><td><code>NO_PADDING</code></td><td>不做填充，使用 num_token_non_padded 跟踪</td></tr>
+</table>
+
+<h3>10.3 全局 token 数同步</h3>
+<p>在 DP Attention 模式下，<code>global_num_tokens_cpu</code> 记录每个 DP rank 的 token 数，用于：</p>
+<ul>
+<li>MLP 层的 AllReduce 同步（需要对齐 buffer 长度）</li>
+<li>Logits 处理时正确切片各 rank 的输出</li>
+<li>CUDA Graph 的 can_run 判断</li>
+</ul>
+
+<h2 id="hybrid">11. 混合注意力后端</h2>
+<p>对于 Mamba/GDN/KimiLinear 等混合架构，SGLang 通过包装模式组合不同注意力后端。</p>
+
+<div class="mermaid">
+graph TB
+    AW["attn_backend_wrapper()"] --> |"hybrid GDN"| GDN["GDNAttnBackend<br/>(FLA + Full Attn)"]
+    AW --> |"Mamba2"| M2["Mamba2AttnBackend<br/>(Mamba + Full Attn)"]
+    AW --> |"KimiLinear"| KL["KimiLinearAttnBackend<br/>(Linear + Full Attn)"]
+    AW --> |"普通模型"| FA["原始 AttentionBackend"]
+
+    GDN --> G1["线性注意力层: FLA kernel"]
+    GDN --> G2["全注意力层: FlashInfer/Triton"]
+
+    style AW fill:#39d0d8,color:#0d1117
+</div>
+
+<div class="highlight">
+<strong>混合架构处理：</strong>对于混合模型（如 Falcon-H1 = Mamba + Attention），<code>HybridLinearAttnBackend</code> 根据 <code>layer_id</code> 决定使用线性注意力还是全注意力 kernel，在同一个批次内透明切换。
+</div>
+
+<h2 id="summary">12. 总结</h2>
+<div class="card">
+<h4>SGLang 注意力系统的核心特点</h4>
+<ul>
+<li><strong>注册表模式：</strong>15+ 种后端通过装饰器统一注册，运行时按名称选择</li>
+<li><strong>统一抽象接口：</strong>AttentionBackend 基类定义了 forward_decode/forward_extend/init_metadata 等标准接口</li>
+<li><strong>FlashInfer 默认后端：</strong>支持 paged KV、ragged prefill、Tensor Core decode、FP8 等特性</li>
+<li><strong>Triton 可定制后端：</strong>自定义 kernel 支持 KV split、double sparsity 等高级特性</li>
+<li><strong>MLA 专用优化：</strong>FlashMLA/FlashInfer-MLA/Cutlass-MLA 针对 DeepSeek MLA 架构深度优化</li>
+<li><strong>分页 KV 管理：</strong>CSR 格式的索引结构支持非连续内存的高效访问</li>
+<li><strong>DP Attention：</strong>在数据并行模式下分割注意力计算，仅在 MLP 层做 AllReduce</li>
+<li><strong>混合架构支持：</strong>透明包装不同后端以支持 Mamba/GDN/KimiLinear 等混合模型</li>
+<li><strong>CUDA Graph 集成：</strong>每个后端实现图捕获/回放所需的元数据初始化接口</li>
+</ul>
+</div>
+
+</main>
+</div>
+<script>mermaid.initialize({startOnLoad:true,theme:'dark'});</script>
+</body>
+</html>

@@ -1,0 +1,1044 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang 投机解码 (Speculative Decoding) 深度解析">
+  <meta name="report-type"  content="repo">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang 投机解码 (Speculative Decoding) 深度解析">
+  <meta name="report-type"  content="sglang">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+<title>SGLang 投机解码 (Speculative Decoding) 深度解析</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-secondary: #161b22;
+    --bg-tertiary: #1c2333;
+    --cyan: #39d0d8;
+    --cyan-dim: #1a6b6f;
+    --text: #e6edf3;
+    --text-dim: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --orange: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --border: #30363d;
+    --code-bg: #0d1117;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    display: flex;
+  }
+  .sidebar {
+    position: fixed;
+    left: 0; top: 0;
+    width: 300px;
+    height: 100vh;
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 20px 0;
+    z-index: 100;
+  }
+  .sidebar h2 {
+    color: var(--cyan);
+    font-size: 15px;
+    padding: 0 20px 15px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 10px;
+  }
+  .sidebar a {
+    display: block;
+    color: var(--text-dim);
+    text-decoration: none;
+    padding: 6px 20px;
+    font-size: 13px;
+    border-left: 3px solid transparent;
+    transition: all 0.2s;
+  }
+  .sidebar a:hover, .sidebar a.active {
+    color: var(--cyan);
+    background: rgba(57,208,216,0.05);
+    border-left-color: var(--cyan);
+  }
+  .sidebar .s2 { padding-left: 35px; font-size: 12px; }
+  .main {
+    margin-left: 300px;
+    max-width: 960px;
+    padding: 40px 50px 100px;
+    width: calc(100% - 300px);
+  }
+  h1 {
+    font-size: 32px;
+    color: var(--cyan);
+    margin-bottom: 8px;
+    border-bottom: 2px solid var(--cyan-dim);
+    padding-bottom: 12px;
+  }
+  .subtitle { color: var(--text-dim); margin-bottom: 40px; font-size: 14px; }
+  h2 {
+    font-size: 24px;
+    color: var(--cyan);
+    margin: 50px 0 20px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 { font-size: 18px; color: var(--accent); margin: 30px 0 12px; }
+  h4 { font-size: 15px; color: var(--green); margin: 20px 0 8px; }
+  p { margin-bottom: 14px; color: var(--text); }
+  ul, ol { margin: 10px 0 14px 24px; }
+  li { margin-bottom: 6px; }
+  code {
+    background: var(--bg-tertiary);
+    color: var(--cyan);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: 'SFMono-Regular', Consolas, monospace;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    overflow-x: auto;
+    margin: 14px 0;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; }
+  .mermaid {
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    padding: 20px;
+    margin: 20px 0;
+    text-align: center;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 10px 14px;
+    text-align: left;
+  }
+  th { background: var(--bg-tertiary); color: var(--cyan); }
+  tr:hover { background: rgba(57,208,216,0.03); }
+  .callout {
+    background: rgba(57,208,216,0.06);
+    border-left: 4px solid var(--cyan);
+    padding: 14px 18px;
+    border-radius: 0 8px 8px 0;
+    margin: 16px 0;
+  }
+  .callout-warn {
+    background: rgba(210,153,34,0.06);
+    border-left: 4px solid var(--orange);
+    padding: 14px 18px;
+    border-radius: 0 8px 8px 0;
+    margin: 16px 0;
+  }
+  .callout-red {
+    background: rgba(248,81,73,0.06);
+    border-left: 4px solid var(--red);
+    padding: 14px 18px;
+    border-radius: 0 8px 8px 0;
+    margin: 16px 0;
+  }
+  .tag {
+    display: inline-block;
+    background: var(--bg-tertiary);
+    color: var(--cyan);
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    margin-right: 6px;
+  }
+  .file-path {
+    color: var(--text-dim);
+    font-size: 12px;
+    font-family: monospace;
+    margin-bottom: 8px;
+  }
+</style>
+</head>
+<body>
+
+<nav class="sidebar">
+  <h2>投机解码深度解析</h2>
+  <a href="#overview">1. 投机解码概述</a>
+  <a href="#principles" class="s2">1.1 核心原理</a>
+  <a href="#algorithms" class="s2">1.2 算法枚举</a>
+  <a href="#architecture">2. 系统架构</a>
+  <a href="#worker-hierarchy" class="s2">2.1 Worker 层次</a>
+  <a href="#data-structures" class="s2">2.2 数据结构</a>
+  <a href="#eagle">3. EAGLE 算法</a>
+  <a href="#eagle-worker" class="s2">3.1 EAGLEWorker</a>
+  <a href="#eagle-draft" class="s2">3.2 Draft 阶段</a>
+  <a href="#eagle-verify" class="s2">3.3 Verify 阶段</a>
+  <a href="#eagle-tree">4. Token Tree 构建</a>
+  <a href="#tree-build" class="s2">4.1 树构建算法</a>
+  <a href="#tree-mask" class="s2">4.2 Tree Mask</a>
+  <a href="#tree-verify" class="s2">4.3 树验证</a>
+  <a href="#eagle3">5. EAGLE-3</a>
+  <a href="#eagle3-features" class="s2">5.1 EAGLE-3 特征</a>
+  <a href="#eagle-v2">6. Overlap Worker (V2)</a>
+  <a href="#v2-design" class="s2">6.1 V2 设计</a>
+  <a href="#ngram">7. N-Gram 投机</a>
+  <a href="#ngram-worker" class="s2">7.1 NGRAMWorker</a>
+  <a href="#ngram-cache" class="s2">7.2 N-Gram Cache</a>
+  <a href="#cuda-graph">8. CUDA Graph 优化</a>
+  <a href="#draft-graph" class="s2">8.1 Draft CUDA Graph</a>
+  <a href="#extend-graph" class="s2">8.2 Extend CUDA Graph</a>
+  <a href="#standalone">9. Standalone Worker</a>
+  <a href="#sampling">10. 采样策略</a>
+  <a href="#greedy" class="s2">10.1 贪心验证</a>
+  <a href="#stochastic" class="s2">10.2 随机验证</a>
+  <a href="#kv-cache">11. KV Cache 管理</a>
+  <a href="#moe-spec">12. MoE 投机支持</a>
+  <a href="#summary">13. 总结</a>
+</nav>
+
+<div class="main">
+
+<h1>SGLang 投机解码 (Speculative Decoding) 深度解析</h1>
+<p class="subtitle">源码路径: sglang/srt/speculative/ -- EAGLE / EAGLE-3 / N-Gram / Standalone 全流程解析</p>
+
+<!-- ==================== Section 1 ==================== -->
+<h2 id="overview">1. 投机解码概述</h2>
+
+<h3 id="principles">1.1 核心原理</h3>
+
+<p>投机解码 (Speculative Decoding) 是一种利用"猜测-验证"范式加速自回归生成的技术。其核心思想是：使用一个轻量的 <strong>draft model</strong>（草稿模型）快速生成多个候选 token，然后由完整的 <strong>target model</strong>（目标模型）一次性并行验证这些候选 token 的正确性。</p>
+
+<div class="mermaid">
+flowchart LR
+    subgraph "传统自回归解码"
+        A1[Token 1] --> A2[Token 2] --> A3[Token 3] --> A4[Token 4] --> A5[Token 5]
+    end
+
+    subgraph "投机解码"
+        B1[Draft: 猜测 5 个 Token<br/>1 次 forward] --> B2[Target: 并行验证<br/>1 次 forward]
+        B2 --> B3[接受 3 个 + Bonus Token<br/>= 4 个有效 Token]
+    end
+    style B1 fill:#1a3a4a,stroke:#39d0d8,color:#e6edf3
+    style B2 fill:#2a1a3a,stroke:#bc8cff,color:#e6edf3
+    style B3 fill:#1a2a1a,stroke:#3fb950,color:#e6edf3
+</div>
+
+<div class="callout">
+<strong>加速原理：</strong>如果 draft model 的预测准确率较高，一次"猜测+验证"可以在 2 次 forward 中生成 N+1 个 token（N 个被接受 + 1 个 bonus token），而传统方法需要 N+1 次 forward。由于 LLM 推理是 memory-bound 的，draft model 的额外计算开销很小，因此可以获得显著的加速。
+</div>
+
+<h3 id="algorithms">1.2 算法枚举</h3>
+<p class="file-path">sglang/srt/speculative/spec_info.py</p>
+
+<table>
+<tr><th>算法</th><th>Draft Model</th><th>特征</th><th>适用场景</th></tr>
+<tr><td><code>EAGLE</code></td><td>共享嵌入的轻量头</td><td>Tree-based, 多步草稿</td><td>通用加速</td></tr>
+<tr><td><code>EAGLE3</code></td><td>独立 LM Head 变体</td><td>辅助隐藏状态, 改进精度</td><td>更高接受率</td></tr>
+<tr><td><code>STANDALONE</code></td><td>独立的小模型</td><td>完全独立的 draft model</td><td>任意模型对</td></tr>
+<tr><td><code>NGRAM</code></td><td>N-Gram 缓存</td><td>无需训练, 基于统计</td><td>重复性高的文本</td></tr>
+</table>
+
+<pre><code># 算法选择逻辑
+class SpeculativeAlgorithm(Enum):
+    EAGLE = auto()
+    EAGLE3 = auto()
+    STANDALONE = auto()
+    NGRAM = auto()
+    NONE = auto()
+
+    def create_worker(self, server_args):
+        if self.is_eagle() and server_args.enable_multi_layer_eagle:
+            return MultiLayerEagleWorker[V2]
+        elif self.is_eagle():
+            return EAGLEWorker[V2]   # V2 = overlap scheduler
+        elif self.is_standalone():
+            return StandaloneWorker[V2]
+        elif self.is_ngram():
+            return NGRAMWorker</code></pre>
+
+<!-- ==================== Section 2 ==================== -->
+<h2 id="architecture">2. 系统架构</h2>
+
+<h3 id="worker-hierarchy">2.1 Worker 层次结构</h3>
+
+<div class="mermaid">
+classDiagram
+    class BaseSpecWorker {
+        &lt;&lt;abstract&gt;&gt;
+        +target_worker: TpModelWorker
+        +draft_worker: BaseDraftWorker
+        +clear_cache_pool()
+    }
+    class BaseDraftWorker {
+        &lt;&lt;abstract&gt;&gt;
+        +draft()
+        +draft_extend()
+    }
+    class EAGLEWorker {
+        +target_worker: TpModelWorker
+        +draft_model_runner: ModelRunner
+        +cuda_graph_runner: EAGLEDraftCudaGraphRunner
+        +forward_batch_generation()
+        +draft()
+        +verify()
+        +forward_draft_extend()
+        +forward_draft_extend_after_decode()
+    }
+    class EAGLEWorkerV2 {
+        +overlap scheduler 支持
+        +异步 draft/verify
+    }
+    class NGRAMWorker {
+        +ngram_cache: NgramCache
+        +forward_batch_generation()
+        -_prepare_draft_tokens()
+    }
+    class StandaloneWorker {
+        +独立 draft model
+        +forward_batch_generation()
+    }
+    class MultiLayerEagleWorker {
+        +多层 draft model
+        +逐层草稿生成
+    }
+
+    BaseSpecWorker <|-- EAGLEWorker
+    EAGLEWorker <|-- EAGLEWorkerV2
+    EAGLEWorker <|-- MultiLayerEagleWorker
+    BaseSpecWorker <|-- StandaloneWorker
+    NGRAMWorker ..> TpModelWorker : uses target
+</div>
+
+<h3 id="data-structures">2.2 核心数据结构</h3>
+
+<div class="mermaid">
+classDiagram
+    class SpecInput {
+        &lt;&lt;abstract&gt;&gt;
+        +spec_input_type: SpecInputType
+        +is_draft_input() bool
+        +is_verify_input() bool
+        +get_spec_adjust_token_coefficient()
+    }
+    class EagleDraftInput {
+        +topk_p: Tensor (b, topk)
+        +topk_index: Tensor (b, topk)
+        +hidden_states: Tensor (b, hidden_size)
+        +verified_id: Tensor (b,)
+        +accept_length: Tensor (b,)
+        +capture_hidden_mode
+        +prepare_for_extend()
+        +prepare_extend_after_decode()
+        +filter_batch()
+        +merge_batch()
+    }
+    class EagleVerifyInput {
+        +draft_token: Tensor
+        +custom_mask: Tensor
+        +positions: Tensor
+        +retrive_index: Tensor
+        +retrive_next_token: Tensor
+        +retrive_next_sibling: Tensor
+        +spec_steps: int
+        +topk: int
+        +draft_token_num: int
+        +prepare_for_verify()
+        +verify() EagleVerifyOutput
+    }
+    class EagleVerifyOutput {
+        +draft_input: EagleDraftInput
+        +logits_output: LogitsProcessorOutput
+        +verified_id: Tensor
+        +accept_length_per_req_cpu: List
+        +accepted_indices: Tensor
+    }
+    class NgramVerifyInput {
+        +draft_token: Tensor
+        +custom_mask: Tensor
+        +positions: Tensor
+        +retrive_index: Tensor
+        +draft_token_num: int
+        +prepare_for_verify()
+        +verify()
+    }
+
+    SpecInput <|-- EagleDraftInput
+    SpecInput <|-- EagleVerifyInput
+    SpecInput <|-- NgramVerifyInput
+    EagleVerifyInput --> EagleVerifyOutput : produces
+</div>
+
+<!-- ==================== Section 3 ==================== -->
+<h2 id="eagle">3. EAGLE 算法详解</h2>
+
+<p>EAGLE (Extrapolation Algorithm for Greater Language-model Efficiency) 是 SGLang 中最核心的投机解码实现。它使用一个轻量级的 draft head，与 target model 共享词嵌入层和 LM Head，通过多步推理生成候选 token 树。</p>
+
+<h3 id="eagle-worker">3.1 EAGLEWorker 初始化</h3>
+<p class="file-path">sglang/srt/speculative/eagle_worker.py</p>
+
+<div class="mermaid">
+flowchart TB
+    subgraph "EAGLEWorker 初始化流程"
+        A[解析参数<br/>topk, num_steps, num_draft_tokens] --> B[加载 Token Map<br/>hot_token_id 映射]
+        B --> C[初始化 Draft Model<br/>共享 req_to_token_pool]
+        C --> D[共享 Embed & LM Head<br/>从 target model 获取]
+        D --> E[初始化注意力后端<br/>DraftBackendFactory]
+        E --> F[捕获 CUDA Graph<br/>Draft + Extend]
+    end
+    style C fill:#1a3a4a,stroke:#39d0d8,color:#e6edf3
+    style D fill:#2a1a3a,stroke:#bc8cff,color:#e6edf3
+    style F fill:#1a2a1a,stroke:#3fb950,color:#e6edf3
+</div>
+
+<h4>关键配置参数</h4>
+<table>
+<tr><th>参数</th><th>含义</th><th>默认值</th></tr>
+<tr><td><code>speculative_eagle_topk</code></td><td>每步选取的候选 token 数</td><td>通常 4-8</td></tr>
+<tr><td><code>speculative_num_steps</code></td><td>草稿生成的步数</td><td>通常 3-5</td></tr>
+<tr><td><code>speculative_num_draft_tokens</code></td><td>最终用于验证的 token 数</td><td>通常 16-64</td></tr>
+<tr><td><code>speculative_token_map</code></td><td>Hot token 词表映射文件</td><td>None</td></tr>
+</table>
+
+<h3 id="eagle-draft">3.2 Draft 阶段 (草稿生成)</h3>
+
+<p>Draft 阶段是 EAGLE 的核心创新。它通过多步推理构建一个候选 token 树。</p>
+
+<div class="mermaid">
+flowchart TB
+    subgraph "Draft 阶段详细流程"
+        A[预处理: _draft_preprocess_decode] --> B[分配 KV Cache<br/>topk x num_steps 个 slot]
+        B --> C[初始化: 从上一轮验证<br/>获取 hidden_states, topk_p, topk_index]
+        C --> D["Step 0: select_top_k_tokens<br/>选择 topk 个候选"]
+        D --> E["Step 1: Draft Forward<br/>计算 logits + hidden states"]
+        E --> F["Step 1: select_top_k_tokens<br/>选择 topk 个候选"]
+        F --> G["Step 2: Draft Forward<br/>..."]
+        G --> H["Step N-1: 最后一步只选 token"]
+        H --> I[organize_draft_results<br/>按分数排序取 top N]
+        I --> J[build_tree_kernel_efficient<br/>构建 token 树]
+    end
+    style D fill:#1a3a4a,stroke:#39d0d8,color:#e6edf3
+    style E fill:#2a1a3a,stroke:#bc8cff,color:#e6edf3
+    style J fill:#1a2a1a,stroke:#3fb950,color:#e6edf3
+</div>
+
+<pre><code>def draft_forward(self, forward_batch):
+    score_list, token_list, parents_list = [], [], []
+
+    for i in range(self.speculative_num_steps):
+        # 1. 选择 top-k token 并构建树信息
+        input_ids, hidden_states, scores, tree_info = select_top_k_tokens(
+            i, topk_p, topk_index, hidden_states, scores, self.topk
+        )
+        score_list.append(tree_info[0])   # 累积分数
+        token_list.append(tree_info[1])   # token ids
+        parents_list.append(tree_info[2]) # 父节点索引
+
+        if i == self.speculative_num_steps - 1:
+            break  # 最后一步不需要 forward
+
+        # 2. 设置 forward batch 并运行 draft model
+        forward_batch.input_ids = input_ids
+        forward_batch.out_cache_loc = out_cache_loc[i]
+        forward_batch.positions.add_(1)
+        logits_output = self.draft_model_runner.forward(forward_batch)
+
+        # 3. 获取下一步的 topk
+        probs = torch.softmax(logits_output.next_token_logits, dim=-1)
+        topk_p, topk_index = fast_topk(probs, self.topk, dim=-1)
+        hidden_states = logits_output.hidden_states
+
+    # 4. 整理结果并构建验证树
+    parent_list, top_scores_index, draft_tokens = organize_draft_results(
+        score_list, token_list, parents_list, self.speculative_num_draft_tokens
+    )</code></pre>
+
+<h4>KV Cache 布局</h4>
+<p>Draft 阶段的 KV Cache 分配策略取决于 topk 和 page_size：</p>
+
+<pre><code># out_cache_loc 布局 (topk=2, num_steps=3)
+# [       topk 0         ] [       topk 1         ]
+# [iter=0, iter=1, iter=2] [iter=0, iter=1, iter=2]
+
+# 对于 page_size > 1 且 topk > 1 的情况：
+# | -------- | -- xxxx .. | -- xxxx .. | -- xxxx .. |
+#    prefix     top-k = 0    tok-k = 1    top-k = 2
+# "-" = prefix tokens, "x" = draft tokens, "." = padded</code></pre>
+
+<h3 id="eagle-verify">3.3 Verify 阶段 (验证)</h3>
+
+<p>验证阶段使用 target model 一次性处理所有候选 token，并确定哪些可以被接受。</p>
+
+<div class="mermaid">
+flowchart TB
+    subgraph "Verify 阶段"
+        A[准备: prepare_for_verify<br/>分配 KV Cache, 设置 tree mask] --> B[Target Model Forward<br/>并行处理所有 draft tokens]
+        B --> C{采样策略}
+        C -->|贪心| D[verify_tree_greedy<br/>逐节点比较]
+        C -->|随机| E[tree_speculative_sampling<br/>概率接受/拒绝]
+        D --> F[确定 accept_index<br/>和 accept_length]
+        E --> F
+        F --> G[后处理: 释放未接受的 KV Cache]
+        G --> H[构造 EagleVerifyOutput<br/>传递给下一轮 draft]
+    end
+    style B fill:#1a3a4a,stroke:#39d0d8,color:#e6edf3
+    style D fill:#2a1a3a,stroke:#bc8cff,color:#e6edf3
+    style E fill:#2a1a3a,stroke:#bc8cff,color:#e6edf3
+</div>
+
+<h4>验证后处理</h4>
+<pre><code>def verify(self, batch, logits_output, token_to_kv_pool_allocator, page_size, vocab_mask):
+    # 1. 采样/贪心验证
+    if is_all_greedy:
+        target_predict = torch.argmax(logits_output.next_token_logits, dim=-1)
+        predict, accept_index, accept_length = verify_tree_greedy_func(...)
+    else:
+        tree_speculative_sampling_target_only(...)
+
+    # 2. 遍历接受的 token，检查是否完成
+    for i, (req, accept_index_row) in enumerate(zip(batch.reqs, accept_index_cpu)):
+        for j, idx in enumerate(accept_index_row):
+            if idx == -1: break
+            id = predict_cpu[idx]
+            req.output_ids.append(id)
+            req.check_finished()
+            if req.finished():
+                accept_index[i, j + 1:] = -1  # 截断
+                break
+
+    # 3. 释放未接受的 KV Cache
+    evict_mask = torch.full_like(draft_token, True, dtype=torch.bool)
+    evict_mask[accept_index] = False
+    token_to_kv_pool_allocator.free(batch.out_cache_loc[evict_mask])
+
+    # 4. 构造输出
+    return EagleVerifyOutput(
+        draft_input=EagleDraftInput(
+            hidden_states=hidden_states[accept_index],
+            verified_id=verified_id,
+            accept_length=accept_length,
+        ),
+        verified_id=predict[accept_index],
+        accept_length_per_req_cpu=accept_length_list,
+    )</code></pre>
+
+<!-- ==================== Section 4 ==================== -->
+<h2 id="eagle-tree">4. Token Tree 构建</h2>
+
+<h3 id="tree-build">4.1 树构建算法</h3>
+<p class="file-path">sglang/srt/speculative/eagle_utils.py</p>
+
+<p>EAGLE 的核心创新之一是使用树结构而非线性链来组织候选 token，从而在有限的验证预算内覆盖更多可能的生成路径。</p>
+
+<div class="mermaid">
+graph TB
+    subgraph "Token Tree 示例 (topk=3, steps=3)"
+        ROOT[Verified Token<br/>根节点] --> S1A[Step1 Top1<br/>score=0.8]
+        ROOT --> S1B[Step1 Top2<br/>score=0.5]
+        ROOT --> S1C[Step1 Top3<br/>score=0.2]
+        S1A --> S2A[Step2 Top1<br/>score=0.64]
+        S1A --> S2B[Step2 Top2<br/>score=0.4]
+        S1A --> S2C[Step2 Top3<br/>score=0.16]
+        S1B --> S2D[Step2 Top1<br/>score=0.25]
+        S2A --> S3A[Step3 Top1<br/>score=0.51]
+        S2A --> S3B[Step3 Top2<br/>score=0.32]
+    end
+    style ROOT fill:#1a3a4a,stroke:#39d0d8,color:#e6edf3
+    style S1A fill:#1a2a1a,stroke:#3fb950,color:#e6edf3
+    style S2A fill:#1a2a1a,stroke:#3fb950,color:#e6edf3
+    style S3A fill:#1a2a1a,stroke:#3fb950,color:#e6edf3
+</div>
+
+<h4>organize_draft_results</h4>
+<pre><code>def organize_draft_results(score_list, token_list, parents_list, num_draft_token):
+    # 1. 将多步的分数展平
+    score_list = torch.cat(score_list, dim=1).flatten(1)  # (bs, total_candidates)
+
+    # 2. 选择 top num_draft_token-1 个最高分候选
+    top_scores = torch.topk(score_list, num_draft_token - 1, dim=-1)
+    top_scores_index = torch.sort(top_scores.indices).values
+
+    # 3. 根据索引收集 draft tokens
+    draft_tokens = torch.gather(ss_token_list, index=top_scores_index, dim=1)
+
+    # 4. 构建父节点列表 (不包含最后一步)
+    parent_list = torch.cat(parents_list[:-1], dim=1)
+
+    return parent_list, top_scores_index, draft_tokens</code></pre>
+
+<h3 id="tree-mask">4.2 Tree Mask 构建</h3>
+
+<p><code>build_tree_kernel_efficient</code> 使用 sgl_kernel 的 CUDA 内核高效构建树注意力掩码和检索索引：</p>
+
+<h4>Tree Mask 模式</h4>
+<table>
+<tr><th>模式</th><th>掩码形状</th><th>说明</th></tr>
+<tr><td><code>FULL_MASK</code></td><td>(seq_lens_sum * N + N^2 * bs)</td><td>完整掩码，包含 prefix + draft 部分</td></tr>
+<tr><td><code>QLEN_ONLY</code></td><td>(N * bs * N)</td><td>仅 query 长度部分的掩码</td></tr>
+<tr><td><code>QLEN_ONLY_BITPACKING</code></td><td>(N * bs) 按位打包</td><td>位打包优化，节省显存</td></tr>
+</table>
+
+<h4>检索索引结构</h4>
+<ul>
+  <li><code>retrive_index</code>: (bs, num_verify_tokens) -- 每个位置在验证结果中的索引</li>
+  <li><code>retrive_next_token</code>: (bs, num_verify_tokens) -- 树中每个节点的第一个子节点</li>
+  <li><code>retrive_next_sibling</code>: (bs, num_verify_tokens) -- 树中每个节点的下一个兄弟节点</li>
+  <li><code>positions</code>: (bs * num_verify_tokens) -- 每个 draft token 的位置编码</li>
+</ul>
+
+<div class="callout">
+<strong>positions 计算示例：</strong>如果每个 draft token 的深度为 [0, 1, 1, 2]，prompt 长度为 7，则 positions = [7, 8, 8, 9]。深度相同的 token 共享相同的位置编码。
+</div>
+
+<h3 id="tree-verify">4.3 树验证算法</h3>
+
+<p>树验证通过 <code>retrive_next_token</code> 和 <code>retrive_next_sibling</code> 实现高效的 DFS 遍历：</p>
+
+<div class="mermaid">
+flowchart TB
+    subgraph "树验证 DFS 遍历"
+        A[根节点: 比较 target_predict 与 draft_token] --> B{匹配?}
+        B -->|Yes| C[接受! 移动到 retrive_next_token<br/>第一个子节点]
+        B -->|No| D[拒绝! 当前节点作为 bonus token]
+        C --> E{子节点匹配?}
+        E -->|Yes| F[继续接受, 移动到子节点]
+        E -->|No| G[尝试 retrive_next_sibling<br/>兄弟节点]
+        G --> H{兄弟匹配?}
+        H -->|Yes| I[接受兄弟, 继续子树]
+        H -->|No| J[使用 target 预测<br/>作为 bonus token]
+    end
+    style C fill:#1a2a1a,stroke:#3fb950,color:#e6edf3
+    style D fill:#3a1a1a,stroke:#f85149,color:#e6edf3
+</div>
+
+<!-- ==================== Section 5 ==================== -->
+<h2 id="eagle3">5. EAGLE-3</h2>
+
+<h3 id="eagle3-features">5.1 EAGLE-3 特征</h3>
+
+<p>EAGLE-3 是 EAGLE 的改进版本，主要区别：</p>
+
+<table>
+<tr><th>特征</th><th>EAGLE</th><th>EAGLE-3</th></tr>
+<tr><td>LM Head</td><td>共享 target 的 lm_head</td><td>通常有独立的 lm_head（部分模型共享）</td></tr>
+<tr><td>隐藏状态</td><td>标准 hidden_states</td><td>辅助隐藏状态 (aux_hidden_state)，尺寸为 3x hidden_size</td></tr>
+<tr><td>Token Map</td><td>需要额外指定</td><td>模型内置 hot_token_id</td></tr>
+<tr><td>DP Attention</td><td>标准 TP context</td><td>使用 attention TP group 的 draft_tp_context</td></tr>
+</table>
+
+<pre><code># EAGLE-3 初始化逻辑
+if self.speculative_algorithm.is_eagle3():
+    if model.load_lm_head_from_target:
+        model.set_embed_and_head(embed, head)  # 共享
+    else:
+        model.set_embed(embed)  # 仅共享 embed
+
+    # 内置 hot token ids
+    if model.hot_token_id is not None:
+        self.hot_token_id = model.hot_token_id.to(embed.device)
+
+    # 辅助隐藏状态
+    self.eagle_use_aux_hidden_state = eagle_config.get("use_aux_hidden_state", True)</code></pre>
+
+<!-- ==================== Section 6 ==================== -->
+<h2 id="eagle-v2">6. Overlap Worker (V2 架构)</h2>
+
+<h3 id="v2-design">6.1 V2 设计理念</h3>
+
+<p>V2 Worker（如 <code>EAGLEWorkerV2</code>、<code>StandaloneWorkerV2</code>）支持 overlap scheduler，允许 draft 和 verify 阶段与调度器的其他操作重叠执行。</p>
+
+<div class="mermaid">
+sequenceDiagram
+    participant S as Scheduler
+    participant T as Target Worker
+    participant D as Draft Worker
+
+    Note over S,D: V1: 串行执行
+    S->>D: draft()
+    D-->>S: draft tokens
+    S->>T: verify()
+    T-->>S: accepted tokens
+
+    Note over S,D: V2: 重叠执行
+    S->>D: draft() [异步]
+    S->>S: 调度其他任务
+    D-->>S: draft tokens [回调]
+    S->>T: verify() [与下一个 draft 重叠]
+    T-->>S: accepted tokens
+    S->>D: draft_extend_after_decode() [与调度重叠]
+</div>
+
+<p>V2 架构的关键特性：</p>
+<ul>
+  <li><strong>FutureIndices</strong>：延迟的索引结构，允许在验证完成前就开始准备下一轮</li>
+  <li><strong>verify_done Event</strong>：CUDA Event 用于同步验证完成状态</li>
+  <li><strong>支持 multi-layer eagle</strong>：<code>MultiLayerEagleWorkerV2</code> 将多层 draft model 与 overlap 结合</li>
+</ul>
+
+<!-- ==================== Section 7 ==================== -->
+<h2 id="ngram">7. N-Gram 投机解码</h2>
+
+<h3 id="ngram-worker">7.1 NGRAMWorker</h3>
+<p class="file-path">sglang/srt/speculative/ngram_worker.py</p>
+
+<p>N-Gram 投机是一种无需额外模型的投机解码方法，通过匹配历史 token 序列来预测后续 token。</p>
+
+<div class="mermaid">
+flowchart TB
+    subgraph "N-Gram 投机流程"
+        A[输入 Batch] --> B[构建 N-Gram Cache<br/>从历史 output_ids]
+        B --> C["查询: 取最后 N 个 token<br/>在缓存中匹配"]
+        C --> D["获取 draft tokens<br/>最多 draft_token_num 个"]
+        D --> E[构建 Tree Mask<br/>reconstruct_indices_from_tree_mask]
+        E --> F[Target Verify<br/>一次性验证]
+        F --> G[更新 N-Gram Cache<br/>加入新的 n-gram]
+    end
+    style C fill:#1a3a4a,stroke:#39d0d8,color:#e6edf3
+    style E fill:#2a1a3a,stroke:#bc8cff,color:#e6edf3
+    style F fill:#1a2a1a,stroke:#3fb950,color:#e6edf3
+</div>
+
+<h3 id="ngram-cache">7.2 N-Gram Cache 详解</h3>
+<p class="file-path">sglang/srt/speculative/cpp_ngram/ngram_cache.py (C++ 实现)</p>
+
+<h4>关键配置</h4>
+<table>
+<tr><th>参数</th><th>含义</th></tr>
+<tr><td><code>min_match_window_size</code></td><td>最小匹配窗口大小</td></tr>
+<tr><td><code>max_match_window_size</code></td><td>最大匹配窗口大小（越大匹配越精确但命中率越低）</td></tr>
+<tr><td><code>min_bfs_breadth / max_bfs_breadth</code></td><td>BFS 搜索宽度范围</td></tr>
+<tr><td><code>capacity</code></td><td>缓存容量</td></tr>
+<tr><td><code>branch_length</code></td><td>每次插入的分支长度</td></tr>
+</table>
+
+<h4>工作流程</h4>
+<pre><code>class NGRAMWorker:
+    def _prepare_draft_tokens(self, batch):
+        # 1. 同步缓存
+        self.ngram_cache.synchronize()
+
+        # 2. 为每个请求构建查询 token
+        batch_tokens = []
+        for req in batch.reqs:
+            check_token = self._efficient_concat_last_n(
+                req.origin_input_ids, req.output_ids, self.max_match_window_size
+            )
+            batch_tokens.append(check_token)
+
+        # 3. 批量查询，返回 draft tokens 和 mask
+        req_drafts, mask = self.ngram_cache.batch_get(batch_tokens)
+        return req_drafts, mask  # numpy arrays
+
+    def _update_ngram_cache(self, batch):
+        # 验证后更新缓存
+        batch_tokens = []
+        for req in batch.reqs:
+            put_ids = self._efficient_concat_last_n(
+                req.origin_input_ids, req.output_ids, self.branch_length
+            )
+            batch_tokens.append(put_ids)
+        self.ngram_cache.batch_put(batch_tokens)</code></pre>
+
+<h4>预分配张量优化</h4>
+<p>NGRAMWorker 在初始化时预分配所有需要的张量缓冲区（按 max_batch_size 分配），避免运行时的内存分配开销：</p>
+<pre><code>self.draft_tokens = torch.empty((max_total_drafts,), dtype=torch.int64, device=device)
+self.tree_mask = torch.empty((max_total_mask_size,), dtype=torch.bool, device=device)
+self.positions = torch.empty((max_total_drafts,), dtype=torch.int64, device=device)
+# 预创建每个 batch size 的 view
+for bs in range(max_batch_size + 1):
+    self.draft_tokens_batch.append(self.draft_tokens[:bs * draft_token_num])</code></pre>
+
+<!-- ==================== Section 8 ==================== -->
+<h2 id="cuda-graph">8. CUDA Graph 优化</h2>
+
+<h3 id="draft-graph">8.1 Draft CUDA Graph Runner</h3>
+<p class="file-path">sglang/srt/speculative/eagle_draft_cuda_graph_runner.py</p>
+
+<p>Draft 阶段的 CUDA Graph 捕获是投机解码性能的关键。<code>EAGLEDraftCudaGraphRunner</code> 将多步 draft forward 捕获为 CUDA Graph，避免每步的 kernel launch 开销。</p>
+
+<div class="mermaid">
+flowchart TB
+    subgraph "CUDA Graph 捕获"
+        A[确定 batch sizes to capture] --> B[初始化 Graph 输入缓冲区<br/>input_ids, positions, seq_lens, ...]
+        B --> C[初始化注意力后端<br/>cuda_graph_state]
+        C --> D[For each batch_size:]
+        D --> E["捕获: 多步 draft forward<br/>+ topk selection"]
+        E --> F[存储: graphs + output_buffers]
+    end
+    subgraph "CUDA Graph 回放"
+        G[检查 can_run<br/>batch_size 匹配?] --> H[拷贝输入到缓冲区]
+        H --> I[graph.replay()]
+        I --> J[读取输出: parent_list,<br/>top_scores_index, draft_tokens]
+    end
+    style E fill:#1a3a4a,stroke:#39d0d8,color:#e6edf3
+    style I fill:#1a2a1a,stroke:#3fb950,color:#e6edf3
+</div>
+
+<h4>Graph 输入缓冲区</h4>
+<pre><code>with torch.device(model_runner.device):
+    self.input_ids = torch.zeros((max_num_token,), dtype=torch.int64)
+    self.req_pool_indices = torch.zeros((max_bs,), dtype=torch.int32)
+    self.out_cache_loc = torch.zeros(
+        (max_num_token * speculative_num_steps,), dtype=cache_loc_dtype
+    )
+    self.positions = torch.zeros((max_num_token,), dtype=torch.int64)
+    self.seq_lens = torch.full((max_bs,), seq_len_fill_value, dtype=torch.int32)
+    self.hidden_states = torch.zeros(
+        (max_num_token, hidden_size), dtype=model_runner.dtype
+    )
+    self.topk_p = torch.zeros((max_num_token, topk), dtype=torch.float32)
+    self.topk_index = torch.zeros((max_num_token, topk), dtype=torch.int64)</code></pre>
+
+<h3 id="extend-graph">8.2 Draft Extend CUDA Graph</h3>
+<p class="file-path">sglang/srt/speculative/eagle_draft_extend_cuda_graph_runner.py</p>
+
+<p>Draft Extend 阶段也有专门的 CUDA Graph Runner (<code>EAGLEDraftExtendCudaGraphRunner</code>)，用于加速验证后的 draft 扩展操作。</p>
+
+<div class="callout-warn">
+<strong>注意：</strong>Draft Extend CUDA Graph 仅在 speculative_num_steps > 1 且 draft_extend_attn_backend 已初始化时捕获。NPU 平台当前不支持 Draft Extend CUDA Graph。
+</div>
+
+<!-- ==================== Section 9 ==================== -->
+<h2 id="standalone">9. Standalone Worker</h2>
+
+<p><code>StandaloneWorker</code> 使用一个完全独立的小模型作为 draft model（而非共享权重的轻量头），适用于任意的 draft-target 模型对。</p>
+
+<div class="mermaid">
+flowchart LR
+    subgraph "Standalone 模式"
+        A[独立 Draft Model<br/>如 TinyLLaMA] --> B[Generate Draft Tokens<br/>自回归生成]
+        B --> C[构建验证树]
+        C --> D[Target Model<br/>如 LLaMA-70B]
+        D --> E[验证 + 接受]
+    end
+    style A fill:#1a3a4a,stroke:#39d0d8,color:#e6edf3
+    style D fill:#2a1a3a,stroke:#bc8cff,color:#e6edf3
+</div>
+
+<p>关键区别：</p>
+<ul>
+  <li>Draft model 和 target model 有不同的词表和架构</li>
+  <li>可能需要 token_map 进行词表对齐</li>
+  <li>支持 V2 overlap 模式 (<code>StandaloneWorkerV2</code>)</li>
+</ul>
+
+<!-- ==================== Section 10 ==================== -->
+<h2 id="sampling">10. 采样策略</h2>
+
+<h3 id="greedy">10.1 贪心验证 (Greedy Verification)</h3>
+
+<p>贪心验证是最简单的策略：target model 的 argmax 预测必须与 draft token 完全匹配才接受。</p>
+
+<pre><code>def verify_tree_greedy_func(predicts, accept_index, accept_token_num,
+                            candidates, retrive_index, retrive_next_token,
+                            retrive_next_sibling, target_predict):
+    # sgl_kernel 实现的高效树贪心验证
+    # 使用 retrive_next_token/retrive_next_sibling 进行 DFS 遍历
+    verify_tree_greedy(
+        predicts=predicts,           # 输出: 最终预测的 token
+        accept_index=accept_index,   # 输出: 接受的 token 索引
+        accept_token_num=accept_token_num,  # 输出: 每个序列接受的 token 数
+        candidates=candidates,       # 输入: draft tokens
+        retrive_index=retrive_index, # 输入: 树检索索引
+        retrive_next_token=retrive_next_token,  # 输入: 子节点指针
+        retrive_next_sibling=retrive_next_sibling,  # 输入: 兄弟指针
+        target_predict=target_predict,  # 输入: target 预测
+    )</code></pre>
+
+<h3 id="stochastic">10.2 随机采样验证 (Stochastic Verification)</h3>
+
+<p>对于非贪心采样（temperature > 0），使用概率接受/拒绝机制：</p>
+
+<pre><code># 非贪心验证核心逻辑
+# 1. 应用温度缩放
+expanded_temperature = torch.repeat_interleave(
+    sampling_info.temperatures, draft_token_num, dim=0
+)
+target_probs = F.softmax(logits / expanded_temperature, dim=-1)
+
+# 2. 应用 top-k 和 top-p 截断
+target_probs = top_k_renorm_prob(target_probs, top_ks)
+target_probs = top_p_renorm_prob(target_probs, top_ps)
+
+# 3. 随机接受/拒绝
+coins = torch.rand_like(candidates, dtype=torch.float32)
+coins_for_final = torch.rand((bs,), dtype=torch.float32)
+
+tree_speculative_sampling_target_only(
+    predicts=predict,
+    accept_index=accept_index,
+    accept_token_num=accept_length,
+    candidates=candidates,
+    uniform_samples=coins,
+    uniform_samples_for_final_sampling=coins_for_final,
+    target_probs=target_probs,
+    draft_probs=draft_probs,  # 全零 (target-only)
+    threshold_single=speculative_accept_threshold_single,
+    threshold_acc=speculative_accept_threshold_acc,
+    deterministic=True,
+)</code></pre>
+
+<div class="callout">
+<strong>接受阈值：</strong><code>threshold_single</code> 和 <code>threshold_acc</code> 控制单个 token 和累积的接受阈值，允许在接受率和生成质量之间权衡。
+</div>
+
+<!-- ==================== Section 11 ==================== -->
+<h2 id="kv-cache">11. KV Cache 管理</h2>
+
+<p>投机解码的 KV Cache 管理是最复杂的部分之一，因为需要处理树结构的分配和释放。</p>
+
+<div class="mermaid">
+flowchart TB
+    subgraph "KV Cache 生命周期"
+        A[Draft: 分配 tree slots<br/>num_seqs * topk * num_steps] --> B[assign_draft_cache_locs<br/>Triton 内核分配位置]
+        B --> C[Draft Forward<br/>写入 KV Cache]
+        C --> D[Verify: 分配 verify slots<br/>num_draft_tokens * num_seqs]
+        D --> E[Target Forward<br/>写入 KV Cache]
+        E --> F[确定 accept_index<br/>哪些 token 被接受]
+        F --> G{page_size == 1?}
+        G -->|Yes| H[直接释放 evict_mask<br/>标记的 slots]
+        G -->|No, topk==1| I[对齐页面边界释放<br/>align_evict_mask_to_page_size]
+        G -->|No, topk>1| J[移动 KV Cache<br/>src->tgt + 释放多余页面]
+    end
+    style B fill:#1a3a4a,stroke:#39d0d8,color:#e6edf3
+    style F fill:#2a1a3a,stroke:#bc8cff,color:#e6edf3
+    style J fill:#3a1a1a,stroke:#f85149,color:#e6edf3
+</div>
+
+<h4>大页面 + 多 topk 场景</h4>
+<p>当 page_size > 1 且 topk > 1 时，需要特殊处理：</p>
+<ol>
+  <li><strong>最后一个部分页面需要复制</strong>：每个 topk 分支需要自己的部分页面副本</li>
+  <li><strong>验证后需要移动 KV Cache</strong>：使用 <code>get_src_tgt_cache_loc</code> 计算源和目标位置</li>
+  <li><strong>释放多余页面</strong>：使用 <code>get_target_cache_loc</code> 确定需要释放的 slot</li>
+</ol>
+
+<!-- ==================== Section 12 ==================== -->
+<h2 id="moe-spec">12. MoE 投机支持</h2>
+
+<p>SGLang 的投机解码完整支持 MoE 模型，通过专门的上下文管理器切换 MoE 后端：</p>
+
+<pre><code># 在 draft forward 前切换 MoE 后端
+with speculative_moe_backend_context(), speculative_moe_a2a_backend_context():
+    # Draft model 使用独立的 MoE runner 后端
+    # 例如 draft 可以用 triton 后端，target 用 deep_gemm 后端
+    self.forward_draft_extend(batch, hidden_states, next_token_ids, seq_lens_cpu)</code></pre>
+
+<h4>speculative_moe_backend_context</h4>
+<p>临时将全局 <code>MOE_RUNNER_BACKEND</code> 切换为 <code>SPECULATIVE_MOE_RUNNER_BACKEND</code>：</p>
+<pre><code>@contextmanager
+def speculative_moe_backend_context():
+    global MOE_RUNNER_BACKEND
+    original = MOE_RUNNER_BACKEND
+    try:
+        MOE_RUNNER_BACKEND = get_speculative_moe_runner_backend()
+        yield
+    finally:
+        MOE_RUNNER_BACKEND = original</code></pre>
+
+<h4>speculative_moe_a2a_backend_context</h4>
+<p>类似地切换 A2A 通信后端，并禁用 FP4 allgather（因为 MTP 层通常未量化）。</p>
+
+<!-- ==================== Section 13 ==================== -->
+<h2 id="summary">13. 总结</h2>
+
+<div class="mermaid">
+graph TB
+    subgraph "SGLang 投机解码全景图"
+        A[SpeculativeAlgorithm] --> B{算法选择}
+        B -->|EAGLE/EAGLE3| C[EAGLEWorker]
+        B -->|STANDALONE| D[StandaloneWorker]
+        B -->|NGRAM| E[NGRAMWorker]
+
+        C --> F[Draft Phase]
+        D --> F
+        E --> G[N-Gram Lookup]
+
+        F --> H[Token Tree 构建<br/>build_tree_kernel_efficient]
+        G --> H
+
+        H --> I[Tree Mask + Positions]
+        I --> J[Target Verify<br/>并行前向传播]
+
+        J --> K{采样策略}
+        K -->|Greedy| L[verify_tree_greedy]
+        K -->|Stochastic| M[tree_speculative_sampling]
+
+        L --> N[Accept/Reject<br/>确定接受 token]
+        M --> N
+
+        N --> O[KV Cache 管理<br/>释放未接受的 slots]
+        O --> P[输出接受的 token<br/>+ 准备下一轮 draft]
+
+        Q[CUDA Graph<br/>Draft + Extend] -.-> F
+        R[MoE Context<br/>Backend 切换] -.-> F
+        S[Overlap V2<br/>异步执行] -.-> C
+    end
+    style C fill:#1a3a4a,stroke:#39d0d8,color:#e6edf3
+    style J fill:#2a1a3a,stroke:#bc8cff,color:#e6edf3
+    style H fill:#1a2a1a,stroke:#3fb950,color:#e6edf3
+</div>
+
+<p>SGLang 的投机解码系统具有以下核心优势：</p>
+
+<ol>
+  <li><strong>多算法支持</strong>：EAGLE / EAGLE-3 / Standalone / N-Gram 四种算法，覆盖不同场景需求。EAGLE 适合通用加速，N-Gram 适合无模型场景，Standalone 支持任意模型对。</li>
+
+  <li><strong>树结构投机</strong>：使用 Token Tree 而非线性链，通过 topk 分支在有限验证预算内探索更多路径。<code>build_tree_kernel_efficient</code> 使用 CUDA 内核高效构建树掩码和检索索引。</li>
+
+  <li><strong>高效验证</strong>：支持贪心和随机采样两种验证策略。贪心使用 <code>verify_tree_greedy</code> CUDA 内核，随机使用 <code>tree_speculative_sampling_target_only</code> 内核，均通过 DFS 遍历树结构。</li>
+
+  <li><strong>CUDA Graph 加速</strong>：Draft 和 Draft Extend 阶段均支持 CUDA Graph 捕获，消除多步推理的 kernel launch 开销。支持按 batch size 分桶捕获。</li>
+
+  <li><strong>Overlap 调度</strong>：V2 Worker 支持与 overlap scheduler 配合，将 draft/verify/extend 操作与调度器的批次管理重叠执行。</li>
+
+  <li><strong>精细的 KV Cache 管理</strong>：支持 page_size > 1 和 topk > 1 的复杂场景，通过 Triton 内核（assign_draft_cache_locs、get_src_tgt_cache_loc 等）高效管理树结构的 KV Cache 分配和释放。</li>
+
+  <li><strong>MoE 兼容</strong>：通过 context manager 机制无缝支持 MoE 模型的投机解码，允许 draft model 和 target model 使用不同的 MoE 后端。</li>
+
+  <li><strong>Grammar 约束</strong>：验证阶段支持结构化输出的语法约束（vocab_mask），通过在 tree 验证过程中应用语法掩码确保输出合法性。</li>
+</ol>
+
+<div class="callout">
+<strong>性能关键路径：</strong>在典型的 EAGLE 配置下（topk=4, steps=3, draft_tokens=16），一次 draft+verify 循环可以在 2 次模型 forward（1 次 draft + 1 次 target verify）中生成平均 3-5 个有效 token。CUDA Graph 的使用进一步将 draft 阶段的延迟降低到接近单次 decode 的水平。
+</div>
+
+</div>
+
+<script>
+mermaid.initialize({
+  startOnLoad: true,
+  theme: 'dark',
+  themeVariables: {
+    primaryColor: '#1a3a4a',
+    primaryTextColor: '#e6edf3',
+    primaryBorderColor: '#39d0d8',
+    lineColor: '#39d0d8',
+    secondaryColor: '#161b22',
+    tertiaryColor: '#1c2333',
+    fontSize: '14px'
+  }
+});
+</script>
+</body>
+</html>

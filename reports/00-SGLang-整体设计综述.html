@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang 整体设计综述">
+  <meta name="report-type"  content="repo">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang 整体设计综述">
+  <meta name="report-type"  content="sglang">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+  <title>SGLang 整体设计综述</title>
+  <!-- RESEARCH_META
+  title: SGLang 整体设计综述
+  date: 2026-04-10
+  tags: SGLang, LLM, Inference, Architecture, System Design
+  summary: 全面分析 SGLang 项目的整体架构设计，涵盖核心模块划分、功能特性、请求生命周期、分布式架构等。
+  -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:         #0d1117;
+      --bg2:        #161b22;
+      --bg3:        #1c2128;
+      --border:     #30363d;
+      --text:       #e6edf3;
+      --text2:      #8b949e;
+      --text3:      #656d76;
+      --cyan:       #39d0d8;
+      --blue:       #58a6ff;
+      --green:      #3fb950;
+      --yellow:     #e3b341;
+      --orange:     #f78166;
+      --purple:     #bc8cff;
+      --red:        #f85149;
+      --font-mono:  'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.75;
+      font-size: 16px;
+    }
+    .page-wrap {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      min-height: 100vh;
+    }
+    @media (max-width: 900px) {
+      .page-wrap { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+    }
+    .sidebar {
+      position: sticky; top: 0; height: 100vh; overflow-y: auto;
+      background: var(--bg2); border-right: 1px solid var(--border); padding: 24px 16px;
+    }
+    .sidebar-brand { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text3); margin-bottom: 16px; }
+    .toc a { display: block; padding: 6px 8px; font-size: 13px; color: var(--text2); text-decoration: none; border-radius: 6px; margin-bottom: 2px; transition: all 0.15s; }
+    .toc a:hover, .toc a.active { background: var(--bg3); color: var(--cyan); }
+    .toc .sub { padding-left: 16px; font-size: 12px; }
+    main { max-width: 960px; margin: 0 auto; padding: 48px 32px; }
+    h1 { font-size: 2.2rem; margin-bottom: 8px; background: linear-gradient(135deg, var(--cyan), var(--blue)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .subtitle { color: var(--text2); font-size: 1rem; margin-bottom: 40px; }
+    h2 { font-size: 1.5rem; color: var(--cyan); margin: 48px 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+    h3 { font-size: 1.15rem; color: var(--blue); margin: 32px 0 12px; }
+    h4 { font-size: 1rem; color: var(--purple); margin: 24px 0 8px; }
+    p, li { color: var(--text); margin-bottom: 12px; }
+    ul, ol { padding-left: 24px; }
+    li { margin-bottom: 6px; }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 16px 0; }
+    .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin: 16px 0; }
+    .card h4 { margin-top: 0; }
+    .tag { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; margin: 2px 4px 2px 0; }
+    .tag-cyan { background: rgba(57,208,216,0.15); color: var(--cyan); }
+    .tag-blue { background: rgba(88,166,255,0.15); color: var(--blue); }
+    .tag-green { background: rgba(63,185,80,0.15); color: var(--green); }
+    .tag-yellow { background: rgba(227,179,65,0.15); color: var(--yellow); }
+    .tag-orange { background: rgba(247,129,102,0.15); color: var(--orange); }
+    .tag-purple { background: rgba(188,140,255,0.15); color: var(--purple); }
+    .tag-red { background: rgba(248,81,73,0.15); color: var(--red); }
+    table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+    th, td { padding: 10px 14px; text-align: left; border: 1px solid var(--border); }
+    th { background: var(--bg3); color: var(--cyan); font-weight: 600; }
+    td { background: var(--bg2); }
+    code { font-family: var(--font-mono); background: var(--bg3); padding: 2px 6px; border-radius: 4px; font-size: 0.9em; color: var(--orange); }
+    pre { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; margin: 16px 0; font-size: 13px; line-height: 1.6; }
+    pre code { background: none; padding: 0; color: var(--text); }
+    .mermaid { background: var(--bg2); border-radius: 12px; padding: 20px; margin: 16px 0; display: flex; justify-content: center; }
+    .highlight { background: rgba(57,208,216,0.08); border-left: 3px solid var(--cyan); padding: 16px 20px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+    .warn { background: rgba(227,179,65,0.08); border-left: 3px solid var(--yellow); padding: 16px 20px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+    .metric-row { display: flex; gap: 16px; flex-wrap: wrap; margin: 16px 0; }
+    .metric-box { flex: 1; min-width: 140px; background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 16px; text-align: center; }
+    .metric-box .val { font-size: 1.6rem; font-weight: 700; color: var(--cyan); }
+    .metric-box .label { font-size: 12px; color: var(--text3); margin-top: 4px; }
+  </style>
+</head>
+<body>
+<div class="page-wrap">
+  <nav class="sidebar">
+    <div class="sidebar-brand">SGLang Research</div>
+    <div class="toc">
+      <a href="#overview">项目概述</a>
+      <a href="#arch" class="sub">整体架构</a>
+      <a href="#modules">模块划分</a>
+      <a href="#module-srt" class="sub">SRT Runtime</a>
+      <a href="#module-lang" class="sub">Lang Frontend</a>
+      <a href="#module-mmgen" class="sub">Multimodal Gen</a>
+      <a href="#lifecycle">请求生命周期</a>
+      <a href="#features">核心功能特性</a>
+      <a href="#distributed">分布式架构</a>
+      <a href="#models">模型支持</a>
+      <a href="#comparison">与同类系统对比</a>
+      <a href="#report-index">子报告索引</a>
+    </div>
+  </nav>
+
+  <main>
+    <h1>SGLang 整体设计综述</h1>
+    <p class="subtitle">SGLang Runtime (SRT) &mdash; 高性能 LLM 推理引擎架构全景分析</p>
+
+    <!-- ============================================================ -->
+    <h2 id="overview">1. 项目概述</h2>
+
+    <p>SGLang 是一个由 UC Berkeley LMSYS 团队主导开发的<strong>高性能大语言模型推理与服务框架</strong>。项目的名称源自 <strong>S</strong>tructured <strong>G</strong>eneration <strong>Lang</strong>uage，即"结构化生成语言"。它包含两大核心组件：</p>
+
+    <div class="card-grid">
+      <div class="card">
+        <h4>SGLang Runtime (SRT)</h4>
+        <p>高性能推理后端引擎，负责模型加载、请求调度、KV Cache 管理、模型前向计算等。提供 OpenAI 兼容的 HTTP API。</p>
+        <span class="tag tag-cyan">Inference Engine</span>
+        <span class="tag tag-green">CUDA Optimized</span>
+      </div>
+      <div class="card">
+        <h4>SGLang Frontend (Lang)</h4>
+        <p>结构化生成的前端 DSL，允许开发者以 Python 函数的方式定义复杂的 LLM 交互流程，支持 fork/join、选择、约束生成等。</p>
+        <span class="tag tag-blue">DSL</span>
+        <span class="tag tag-purple">Programming Model</span>
+      </div>
+    </div>
+
+    <div class="metric-row">
+      <div class="metric-box"><div class="val">100+</div><div class="label">支持模型架构</div></div>
+      <div class="metric-box"><div class="val">15+</div><div class="label">Attention 后端</div></div>
+      <div class="metric-box"><div class="val">20+</div><div class="label">量化方案</div></div>
+      <div class="metric-box"><div class="val">TP/EP/DP/PP</div><div class="label">分布式并行</div></div>
+    </div>
+
+    <!-- ============================================================ -->
+    <h2 id="arch">2. 整体架构</h2>
+
+    <h3>2.1 系统架构总览</h3>
+
+    <div class="mermaid">
+graph TB
+    subgraph Client["客户端"]
+        C1["HTTP Client / OpenAI SDK"]
+        C2["SGLang Frontend DSL"]
+        C3["Python Engine API"]
+    end
+
+    subgraph HTTPServer["HTTP Server (FastAPI)"]
+        HS["FastAPI Application<br/>OpenAI-Compatible API"]
+    end
+
+    subgraph Engine["SRT Engine (主进程)"]
+        TM["TokenizerManager<br/>分词 & 请求路由"]
+        TMpl["TemplateManager<br/>Chat Template 管理"]
+    end
+
+    subgraph SchedulerProcess["Scheduler 子进程 (可多个)"]
+        SCH["Scheduler<br/>批处理调度器"]
+        MR["ModelRunner<br/>模型前向执行"]
+        MC["MemoryCache<br/>KV Cache 管理"]
+        RC["RadixCache<br/>前缀缓存树"]
+    end
+
+    subgraph DetokenizerProcess["Detokenizer 子进程"]
+        DT["DetokenizerManager<br/>反分词输出"]
+    end
+
+    subgraph Workers["TP Workers"]
+        W1["TPWorker 0"]
+        W2["TPWorker 1"]
+        W3["TPWorker N"]
+    end
+
+    C1 --> HS
+    C2 --> HS
+    C3 --> TM
+
+    HS --> TM
+    TM --> TMpl
+    TM -->|"ZMQ IPC"| SCH
+    SCH --> MR
+    SCH --> MC
+    MC --> RC
+    MR --> W1
+    MR --> W2
+    MR --> W3
+    SCH -->|"ZMQ IPC"| DT
+    DT -->|"ZMQ IPC"| TM
+    TM --> HS
+    </div>
+
+    <h3>2.2 核心进程模型</h3>
+
+    <p>SGLang 采用<strong>多进程架构</strong>，通过 ZMQ (ZeroMQ) 进行进程间通信：</p>
+
+    <table>
+      <tr><th>进程</th><th>角色</th><th>关键类</th><th>说明</th></tr>
+      <tr>
+        <td><strong>主进程</strong></td>
+        <td>HTTP Server + TokenizerManager</td>
+        <td><code>TokenizerManager</code></td>
+        <td>接收 HTTP 请求，执行分词/反分词，通过 ZMQ 与 Scheduler 通信</td>
+      </tr>
+      <tr>
+        <td><strong>Scheduler 子进程</strong></td>
+        <td>请求调度 + 模型执行</td>
+        <td><code>Scheduler</code>, <code>ModelRunner</code></td>
+        <td>核心调度引擎，管理 prefill/decode 批次，驱动模型前向计算</td>
+      </tr>
+      <tr>
+        <td><strong>Detokenizer 子进程</strong></td>
+        <td>反分词</td>
+        <td><code>DetokenizerManager</code></td>
+        <td>将 token IDs 转换回文本，支持流式输出</td>
+      </tr>
+      <tr>
+        <td><strong>DP Controller</strong></td>
+        <td>数据并行控制</td>
+        <td><code>DataParallelController</code></td>
+        <td>多 Scheduler 实例间的负载均衡 (dp_size > 1 时启用)</td>
+      </tr>
+    </table>
+
+    <h3>2.3 Server 启动流程</h3>
+
+    <div class="mermaid">
+sequenceDiagram
+    participant User as 用户
+    participant Main as 主进程
+    participant TM as TokenizerManager
+    participant SCH as Scheduler进程
+    participant DT as Detokenizer进程
+    participant MR as ModelRunner
+
+    User->>Main: python -m sglang.launch_server
+    Main->>Main: 解析 ServerArgs
+    Main->>SCH: fork Scheduler 子进程
+    SCH->>MR: 初始化 ModelRunner
+    MR->>MR: 加载模型权重
+    MR->>MR: 初始化 KV Cache Pool
+    MR->>MR: 初始化 Attention Backend
+    MR-->>SCH: 返回 scheduler_info
+    Main->>DT: fork Detokenizer 子进程
+    Main->>TM: 初始化 TokenizerManager
+    TM->>TM: 加载 Tokenizer
+    Main->>Main: 创建 FastAPI App
+    Main->>Main: 绑定 HTTP 路由
+    Main->>User: Server Ready
+    </div>
+
+    <!-- ============================================================ -->
+    <h2 id="modules">3. 模块划分</h2>
+
+    <h3 id="module-srt">3.1 SRT Runtime 核心模块</h3>
+
+    <p>SRT 是 SGLang 的推理引擎核心，位于 <code>sglang/srt/</code> 目录下，包含以下子模块：</p>
+
+    <table>
+      <tr><th>子模块</th><th>目录</th><th>功能</th><th>详细报告</th></tr>
+      <tr>
+        <td><strong>Managers</strong></td>
+        <td><code>srt/managers/</code></td>
+        <td>Scheduler 调度器、TokenizerManager、DetokenizerManager、DP Controller 等核心管理组件</td>
+        <td><a href="01-Scheduler调度系统.html">01-Scheduler</a></td>
+      </tr>
+      <tr>
+        <td><strong>Model Executor</strong></td>
+        <td><code>srt/model_executor/</code></td>
+        <td>ModelRunner 模型前向执行器，CUDA Graph Runner，Forward Batch 管理</td>
+        <td><a href="02-ModelExecutor模型执行.html">02-ModelExecutor</a></td>
+      </tr>
+      <tr>
+        <td><strong>Models</strong></td>
+        <td><code>srt/models/</code></td>
+        <td>100+ 模型架构实现 (LLaMA, Qwen, DeepSeek, GLM, Mistral, etc.)</td>
+        <td><a href="03-Models模型支持.html">03-Models</a></td>
+      </tr>
+      <tr>
+        <td><strong>Layers</strong></td>
+        <td><code>srt/layers/</code></td>
+        <td>算子层：Attention、Linear、MoE、量化、RoPE 等</td>
+        <td><a href="04-Layers算子层.html">04-Layers</a></td>
+      </tr>
+      <tr>
+        <td><strong>Attention</strong></td>
+        <td><code>srt/layers/attention/</code></td>
+        <td>15+ Attention 后端：FlashInfer、FlashAttention、Triton、MLA 等</td>
+        <td><a href="05-Attention注意力机制.html">05-Attention</a></td>
+      </tr>
+      <tr>
+        <td><strong>MoE</strong></td>
+        <td><code>srt/layers/moe/</code></td>
+        <td>Mixture of Experts：Fused MoE Triton、EP MoE、CUTLASS MoE</td>
+        <td><a href="06-MoE专家混合.html">06-MoE</a></td>
+      </tr>
+      <tr>
+        <td><strong>Mem Cache</strong></td>
+        <td><code>srt/mem_cache/</code></td>
+        <td>KV Cache 内存池、RadixTree 前缀缓存、存储后端</td>
+        <td><a href="07-MemCache缓存系统.html">07-MemCache</a></td>
+      </tr>
+      <tr>
+        <td><strong>Sampling</strong></td>
+        <td><code>srt/sampling/</code></td>
+        <td>采样策略、频率/存在/重复惩罚、温度、Top-K/Top-P</td>
+        <td><a href="08-Sampling采样系统.html">08-Sampling</a></td>
+      </tr>
+      <tr>
+        <td><strong>Constrained</strong></td>
+        <td><code>srt/constrained/</code></td>
+        <td>约束解码：XGrammar、Outlines、LLGuidance 等 Grammar 后端</td>
+        <td><a href="09-Constrained约束解码.html">09-Constrained</a></td>
+      </tr>
+      <tr>
+        <td><strong>Speculative</strong></td>
+        <td><code>srt/speculative/</code></td>
+        <td>投机解码：EAGLE、EAGLE-2/3、N-Gram</td>
+        <td><a href="10-Speculative投机解码.html">10-Speculative</a></td>
+      </tr>
+      <tr>
+        <td><strong>Quantization</strong></td>
+        <td><code>srt/layers/quantization/</code></td>
+        <td>量化支持：FP8、INT8、GPTQ、AWQ、Marlin、BitsAndBytes 等</td>
+        <td><a href="11-Quantization量化.html">11-Quantization</a></td>
+      </tr>
+      <tr>
+        <td><strong>LoRA</strong></td>
+        <td><code>srt/lora/</code></td>
+        <td>LoRA 适配器加载与推理</td>
+        <td><a href="12-LoRA适配器.html">12-LoRA</a></td>
+      </tr>
+      <tr>
+        <td><strong>Distributed</strong></td>
+        <td><code>srt/distributed/</code></td>
+        <td>TP/EP/DP/PP 分布式通信，NCCL 包装</td>
+        <td><a href="13-Distributed分布式.html">13-Distributed</a></td>
+      </tr>
+      <tr>
+        <td><strong>Disaggregation</strong></td>
+        <td><code>srt/disaggregation/</code></td>
+        <td>Prefill-Decode 分离架构</td>
+        <td><a href="14-Disaggregation分离架构.html">14-Disaggregation</a></td>
+      </tr>
+      <tr>
+        <td><strong>Entrypoints</strong></td>
+        <td><code>srt/entrypoints/</code></td>
+        <td>HTTP Server、Engine API、OpenAI/Anthropic/Ollama 兼容</td>
+        <td><a href="15-Entrypoints服务入口.html">15-Entrypoints</a></td>
+      </tr>
+    </table>
+
+    <h3 id="module-lang">3.2 Lang Frontend 前端模块</h3>
+
+    <table>
+      <tr><th>子模块</th><th>文件</th><th>功能</th></tr>
+      <tr><td>API</td><td><code>lang/api.py</code></td><td>用户面 API：gen(), select(), fork(), image() 等</td></tr>
+      <tr><td>IR</td><td><code>lang/ir.py</code></td><td>中间表示：SglExpr, SglGen, SglSelect 等 IR 节点</td></tr>
+      <tr><td>Interpreter</td><td><code>lang/interpreter.py</code></td><td>IR 解释执行器</td></tr>
+      <tr><td>Tracer</td><td><code>lang/tracer.py</code></td><td>计算图追踪</td></tr>
+      <tr><td>Backend</td><td><code>lang/backend/</code></td><td>后端适配：RuntimeEndpoint、OpenAI、Anthropic、VertexAI 等</td></tr>
+    </table>
+
+    <h3 id="module-mmgen">3.3 Multimodal Gen 多模态生成</h3>
+
+    <p><code>sglang/multimodal_gen/</code> 是专用于图像/视频等多模态内容生成的子系统，支持 DiT 模型（如 Flux、StableDiffusion 3 等），具备独立的推理 runtime、pipeline 系统和 cache 管理。</p>
+
+    <!-- ============================================================ -->
+    <h2 id="lifecycle">4. 请求生命周期</h2>
+
+    <h3>4.1 完整请求流程</h3>
+
+    <div class="mermaid">
+sequenceDiagram
+    participant Client as HTTP Client
+    participant API as FastAPI Router
+    participant TM as TokenizerManager
+    participant SCH as Scheduler
+    participant MR as ModelRunner
+    participant KV as KV Cache Pool
+    participant DT as DetokenizerManager
+
+    Client->>API: POST /v1/chat/completions
+    API->>API: 请求验证 & 参数解析
+    API->>TM: generate_request()
+
+    Note over TM: Tokenize 输入文本
+    TM->>TM: apply_chat_template()
+    TM->>TM: tokenizer.encode()
+    TM->>SCH: 发送 GenerateReqInput (ZMQ)
+
+    Note over SCH: 请求进入等待队列
+    SCH->>SCH: add_request() -> waiting_queue
+
+    loop 调度循环
+        SCH->>SCH: get_next_batch_to_run()
+        alt Prefill 阶段
+            SCH->>SCH: get_new_batch_prefill()
+            SCH->>KV: 分配 KV Cache slots
+            KV->>KV: RadixTree prefix match
+            SCH->>MR: forward(prefill_batch)
+            MR->>MR: model.forward() + logits_processor
+        else Decode 阶段
+            SCH->>SCH: update_running_batch()
+            SCH->>MR: forward(decode_batch)
+            MR->>MR: model.forward() (CUDA Graph)
+        end
+
+        SCH->>SCH: process_batch_result()
+        SCH->>SCH: sampling + check_finished
+    end
+
+    SCH->>DT: BatchTokenIDOutput (ZMQ)
+    DT->>DT: detokenize()
+    DT->>TM: 解码后的文本 (ZMQ)
+    TM->>API: 流式/完整响应
+    API->>Client: SSE Stream / JSON Response
+    </div>
+
+    <h3>4.2 Scheduler 调度核心逻辑</h3>
+
+    <div class="mermaid">
+flowchart TD
+    A["event_loop_normal()"] --> B{"有新请求?"}
+    B -->|Yes| C["process_input_requests()"]
+    B -->|No| D["get_next_batch_to_run()"]
+    C --> D
+
+    D --> E{"有 pending prefill?"}
+    E -->|Yes| F["get_new_batch_prefill()"]
+    E -->|No| G{"running_batch 非空?"}
+
+    F --> H["分配 KV Cache"]
+    H --> I["RadixTree 前缀匹配"]
+    I --> J["构建 ScheduleBatch"]
+
+    G -->|Yes| K["update_running_batch()"]
+    G -->|No| L["idle / sleep"]
+
+    K --> M["过滤已完成请求"]
+    M --> J
+
+    J --> N["ModelRunner.forward()"]
+    N --> O["process_batch_result()"]
+    O --> P["sampling & token append"]
+    P --> Q{"请求完成?"}
+    Q -->|Yes| R["stream_output() -> Detokenizer"]
+    Q -->|No| S["继续 decode 循环"]
+    R --> A
+    S --> A
+    L --> A
+    </div>
+
+    <!-- ============================================================ -->
+    <h2 id="features">5. 核心功能特性</h2>
+
+    <div class="card-grid">
+      <div class="card">
+        <h4>RadixTree 前缀缓存</h4>
+        <span class="tag tag-cyan">核心创新</span>
+        <p>基于 Radix Tree 实现高效的 KV Cache 前缀复用。相同前缀的请求可以共享已计算的 KV Cache，大幅减少 prefill 计算量。支持 LRU/LFU 等多种淘汰策略。</p>
+      </div>
+      <div class="card">
+        <h4>Continuous Batching</h4>
+        <span class="tag tag-green">调度优化</span>
+        <p>连续批处理调度，支持 prefill 和 decode 请求的动态混合调度。通过 chunked prefill 控制首 token 延迟。</p>
+      </div>
+      <div class="card">
+        <h4>CUDA Graph</h4>
+        <span class="tag tag-green">性能优化</span>
+        <p>对 decode 阶段的前向计算进行 CUDA Graph 捕获，消除 CPU 调度开销，显著提升 decode 吞吐量。</p>
+      </div>
+      <div class="card">
+        <h4>投机解码 (EAGLE)</h4>
+        <span class="tag tag-yellow">推测加速</span>
+        <p>支持 EAGLE/EAGLE-2/EAGLE-3 和 N-Gram 投机解码算法，通过 draft model 预测多个 token 候选，降低 decode 延迟。</p>
+      </div>
+      <div class="card">
+        <h4>约束解码 / 结构化输出</h4>
+        <span class="tag tag-purple">生成控制</span>
+        <p>支持 XGrammar、Outlines、LLGuidance 多种 Grammar 后端，实现 JSON Schema、正则表达式等约束生成。</p>
+      </div>
+      <div class="card">
+        <h4>MoE 优化</h4>
+        <span class="tag tag-orange">效率优化</span>
+        <p>Fused MoE Triton kernel、Expert Parallelism (EP)、Token Dispatcher、EPLB (Expert Parallel Load Balancing) 等 MoE 特化优化。</p>
+      </div>
+      <div class="card">
+        <h4>多量化格式</h4>
+        <span class="tag tag-red">压缩推理</span>
+        <p>FP8 (W8A8)、INT8、GPTQ、AWQ、Marlin、BitsAndBytes、MXFP4、KV Cache FP8 等 20+ 种量化方案。</p>
+      </div>
+      <div class="card">
+        <h4>Prefill-Decode 分离</h4>
+        <span class="tag tag-yellow">架构创新</span>
+        <p>支持 P/D 分离部署，prefill 和 decode 阶段在不同机器上执行。通过 NIXL/Mooncake 进行 KV Cache 传输。</p>
+      </div>
+    </div>
+
+    <h3>5.1 功能特性完整列表</h3>
+
+    <table>
+      <tr><th>特性类别</th><th>功能</th><th>说明</th></tr>
+      <tr><td rowspan="5"><strong>调度 & 批处理</strong></td><td>Continuous Batching</td><td>动态 prefill/decode 混合调度</td></tr>
+      <tr><td>Chunked Prefill</td><td>分块 prefill 控制延迟</td></tr>
+      <tr><td>Prefill Delayer</td><td>延迟 prefill 以优化批处理效率</td></tr>
+      <tr><td>Session Controller</td><td>会话级状态管理</td></tr>
+      <tr><td>Batch Overlap</td><td>计算与通信重叠</td></tr>
+      <tr><td rowspan="4"><strong>缓存系统</strong></td><td>RadixTree Cache</td><td>前缀共享 KV Cache</td></tr>
+      <tr><td>HiRadix Cache</td><td>层次化 Radix 缓存</td></tr>
+      <tr><td>Chunk Cache</td><td>分块 KV 缓存</td></tr>
+      <tr><td>外部 KV Store</td><td>Mooncake/LMCache/NIXL/HF3FS 等外部存储</td></tr>
+      <tr><td rowspan="3"><strong>投机解码</strong></td><td>EAGLE/EAGLE-2/3</td><td>基于 draft model 的投机解码</td></tr>
+      <tr><td>N-Gram</td><td>基于 N-Gram 统计的投机解码</td></tr>
+      <tr><td>Multi-layer EAGLE</td><td>多层 EAGLE 投机</td></tr>
+      <tr><td rowspan="4"><strong>分布式</strong></td><td>Tensor Parallelism (TP)</td><td>张量并行</td></tr>
+      <tr><td>Expert Parallelism (EP)</td><td>MoE 专家并行</td></tr>
+      <tr><td>Data Parallelism (DP)</td><td>数据并行</td></tr>
+      <tr><td>Pipeline Parallelism (PP)</td><td>流水线并行</td></tr>
+      <tr><td rowspan="3"><strong>API 兼容</strong></td><td>OpenAI Compatible</td><td>/v1/chat/completions, /v1/completions, /v1/embeddings</td></tr>
+      <tr><td>Anthropic Compatible</td><td>/v1/messages</td></tr>
+      <tr><td>Ollama Compatible</td><td>/api/generate, /api/chat</td></tr>
+      <tr><td rowspan="3"><strong>多模态</strong></td><td>Vision Language Models</td><td>LLaVA, Qwen-VL, InternVL, GLM-4V 等</td></tr>
+      <tr><td>Audio Models</td><td>Qwen2-Audio, GLM-ASR 等</td></tr>
+      <tr><td>DiT 生成</td><td>Flux, SD3 等图像生成</td></tr>
+    </table>
+
+    <!-- ============================================================ -->
+    <h2 id="distributed">6. 分布式架构</h2>
+
+    <div class="mermaid">
+graph TB
+    subgraph DP["Data Parallel (DP)"]
+        subgraph TP1["TP Group 0"]
+            GPU0["GPU 0<br/>TP Rank 0"]
+            GPU1["GPU 1<br/>TP Rank 1"]
+        end
+        subgraph TP2["TP Group 1"]
+            GPU2["GPU 2<br/>TP Rank 0"]
+            GPU3["GPU 3<br/>TP Rank 1"]
+        end
+        DPC["DP Controller<br/>负载均衡"]
+        DPC --> TP1
+        DPC --> TP2
+    end
+
+    subgraph EP["Expert Parallel (EP) for MoE"]
+        E0["Expert 0-31<br/>GPU 0"]
+        E1["Expert 32-63<br/>GPU 1"]
+        E0 <-->|"All-to-All"| E1
+    end
+
+    subgraph PP["Pipeline Parallel (PP)"]
+        S1["Stage 0<br/>Layers 0-15"]
+        S2["Stage 1<br/>Layers 16-31"]
+        S1 -->|"Micro-batch"| S2
+    end
+    </div>
+
+    <table>
+      <tr><th>并行策略</th><th>通信原语</th><th>适用场景</th><th>实现位置</th></tr>
+      <tr>
+        <td>Tensor Parallelism</td>
+        <td>AllReduce (NCCL)</td>
+        <td>单机多卡，通用 Dense 模型</td>
+        <td><code>srt/distributed/</code></td>
+      </tr>
+      <tr>
+        <td>Expert Parallelism</td>
+        <td>All-to-All (NCCL)</td>
+        <td>MoE 模型专家分布</td>
+        <td><code>srt/layers/moe/ep_moe/</code></td>
+      </tr>
+      <tr>
+        <td>Data Parallelism</td>
+        <td>ZMQ 负载均衡</td>
+        <td>多个 Scheduler 实例处理不同请求</td>
+        <td><code>srt/managers/data_parallel_controller.py</code></td>
+      </tr>
+      <tr>
+        <td>Pipeline Parallelism</td>
+        <td>P2P Send/Recv (NCCL)</td>
+        <td>超大模型跨节点</td>
+        <td><code>srt/managers/scheduler_pp_mixin.py</code></td>
+      </tr>
+    </table>
+
+    <!-- ============================================================ -->
+    <h2 id="models">7. 模型支持</h2>
+
+    <p>SGLang 支持 100+ 种模型架构，通过 <code>srt/models/registry.py</code> 管理模型注册。主要分类如下：</p>
+
+    <div class="card-grid">
+      <div class="card">
+        <h4>Dense LLM</h4>
+        <p>LLaMA 1/2/3/4, Qwen 1/2/3, Mistral, DeepSeek, GLM-4, GPT-2, OPT, Phi-1/2/3/4, Gemma 1/2/3, InternLM, ChatGLM, XVERSE, Baichuan, StableLM, Command-R, DBRX, Falcon, Granite, Olmo, Exaone, etc.</p>
+      </div>
+      <div class="card">
+        <h4>MoE LLM</h4>
+        <p>Mixtral, Qwen2-MoE, Qwen3-MoE, DeepSeek-V2/V3, GLM4-MoE, XVERSE-MoE, OLMoE, GraniteMoE, PhiMoE, Grok, AF-MoE, Bailing-MoE, Hunyuan, etc.</p>
+      </div>
+      <div class="card">
+        <h4>Vision-Language</h4>
+        <p>LLaVA, InternVL, Qwen2-VL, Qwen2.5-VL, Qwen3-VL, GLM-4V, MiniCPM-V, Pixtral, MLLaMA, Phi-4-MM, NVILA, DeepSeek-Janus, Kimi-VL, etc.</p>
+      </div>
+      <div class="card">
+        <h4>Embedding & Classification</h4>
+        <p>LLaMA-Embedding, LLaMA-Classification, Qwen2-Classification, BERT, RoBERTa, InternLM2-Reward, Gemma2-Reward, etc.</p>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <h2 id="comparison">8. 与同类系统对比</h2>
+
+    <table>
+      <tr><th>特性</th><th>SGLang</th><th>vLLM</th><th>TensorRT-LLM</th><th>TGI</th></tr>
+      <tr><td>前缀缓存</td><td><span class="tag tag-green">RadixTree</span></td><td>Hash-based</td><td>有限支持</td><td>无</td></tr>
+      <tr><td>结构化输出 DSL</td><td><span class="tag tag-green">原生 SGLang DSL</span></td><td>无</td><td>无</td><td>无</td></tr>
+      <tr><td>EAGLE 投机解码</td><td><span class="tag tag-green">EAGLE 1/2/3</span></td><td>部分支持</td><td>有限</td><td>无</td></tr>
+      <tr><td>MoE EP</td><td><span class="tag tag-green">原生支持</span></td><td>原生支持</td><td>原生支持</td><td>有限</td></tr>
+      <tr><td>P/D 分离</td><td><span class="tag tag-green">NIXL/Mooncake</span></td><td>部分支持</td><td>有限</td><td>无</td></tr>
+      <tr><td>多模态</td><td><span class="tag tag-green">Vision/Audio/DiT</span></td><td>Vision</td><td>有限</td><td>Vision</td></tr>
+      <tr><td>量化格式</td><td>FP8/INT8/GPTQ/AWQ/Marlin等</td><td>类似</td><td>FP8/INT8/INT4</td><td>GPTQ/AWQ</td></tr>
+      <tr><td>约束解码后端</td><td>XGrammar/Outlines/LLGuidance</td><td>XGrammar/Outlines</td><td>有限</td><td>Outlines</td></tr>
+      <tr><td>CUDA Graph</td><td><span class="tag tag-green">完整支持</span></td><td>完整支持</td><td>原生</td><td>无</td></tr>
+    </table>
+
+    <!-- ============================================================ -->
+    <h2 id="report-index">9. 子报告索引</h2>
+
+    <div class="card">
+      <h4>各模块详细设计报告</h4>
+      <ol>
+        <li><a href="01-Scheduler调度系统.html">01 - Scheduler 调度系统</a> - 请求调度、批处理策略、prefill/decode 管理</li>
+        <li><a href="02-ModelExecutor模型执行.html">02 - ModelExecutor 模型执行</a> - ModelRunner、CUDA Graph、Forward Batch</li>
+        <li><a href="03-Models模型支持.html">03 - Models 模型支持</a> - 模型注册、架构适配、DeepSeek 特化</li>
+        <li><a href="04-Layers算子层.html">04 - Layers 算子层</a> - Linear、RoPE、LayerNorm、Sampler 等</li>
+        <li><a href="05-Attention注意力机制.html">05 - Attention 注意力后端</a> - FlashInfer、FlashAttention、MLA 等</li>
+        <li><a href="06-MoE专家混合.html">06 - MoE 专家混合</a> - Fused MoE、EP MoE、Token Dispatcher</li>
+        <li><a href="07-MemCache缓存系统.html">07 - MemCache 缓存系统</a> - RadixTree、内存池、外部存储</li>
+        <li><a href="08-Sampling采样系统.html">08 - Sampling 采样系统</a> - 采样策略、惩罚库</li>
+        <li><a href="09-Constrained约束解码.html">09 - Constrained 约束解码</a> - Grammar 后端、结构化输出</li>
+        <li><a href="10-Speculative投机解码.html">10 - Speculative 投机解码</a> - EAGLE、N-Gram</li>
+        <li><a href="11-Quantization量化.html">11 - Quantization 量化</a> - FP8、INT8、GPTQ、AWQ 等</li>
+        <li><a href="12-LoRA适配器.html">12 - LoRA 适配器</a> - LoRA 加载与推理</li>
+        <li><a href="13-Distributed分布式.html">13 - Distributed 分布式</a> - TP/EP/DP/PP 通信</li>
+        <li><a href="14-Disaggregation分离架构.html">14 - Disaggregation P/D 分离</a> - Prefill-Decode 分离</li>
+        <li><a href="15-Entrypoints服务入口.html">15 - Entrypoints 服务入口</a> - HTTP/gRPC API、OpenAI 兼容</li>
+      </ol>
+    </div>
+
+    <div class="highlight">
+      <strong>代码库版本信息</strong><br/>
+      分析基于 SGLang 已安装包，路径: <code>/root/miniconda3/envs/perf_test_sglang/lib/python3.10/site-packages/sglang/</code>
+    </div>
+
+  </main>
+</div>
+<script>mermaid.initialize({ startOnLoad: true, theme: 'dark' });</script>
+</body>
+</html>

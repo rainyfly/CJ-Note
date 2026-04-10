@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>vLLM 整体设计综述 — CJ-Note</title>
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="vLLM 整体设计综述">
+  <meta name="report-type"  content="repo">
+  <meta name="report-date"  content="2026-04-10">
+  <meta name="report-tags"  content="vllm, framework">
+  <meta name="report-desc"  content="vLLM v1 整体架构分层、模块全景、核心 Feature 矩阵、进程通信模型与请求全链路综述">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #0d1117; --surface: #161b22; --border: #30363d;
+      --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+      --green: #3fb950; --yellow: #d29922; --red: #f85149;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font-sans);
+           line-height: 1.7; padding: 0 1rem; }
+    .page-wrap { max-width: 900px; margin: 0 auto; padding: 2rem 0 4rem; }
+
+    /* Header */
+    .report-header { border-bottom: 1px solid var(--border); padding-bottom: 1.5rem; margin-bottom: 2rem; }
+    .report-header h1 { font-size: 1.9rem; color: var(--accent); margin-bottom: .5rem; }
+    .meta { color: var(--muted); font-size: .85rem; display: flex; gap: 1.5rem; flex-wrap: wrap; }
+    .meta span::before { content: "• "; }
+    .meta span:first-child::before { content: ""; }
+    .back-link { display: inline-block; margin-bottom: 1rem; color: var(--muted);
+                 text-decoration: none; font-size: .85rem; }
+    .back-link:hover { color: var(--accent); }
+
+    /* Sections */
+    h2 { font-size: 1.3rem; color: var(--text); margin: 2.5rem 0 .8rem;
+         padding-bottom: .4rem; border-bottom: 1px solid var(--border); }
+    h3 { font-size: 1.05rem; color: var(--accent); margin: 1.5rem 0 .5rem; }
+    h4 { font-size: .95rem; color: var(--muted); margin: 1rem 0 .3rem; text-transform: uppercase;
+         letter-spacing: .05em; }
+    p { margin-bottom: 1rem; color: var(--text); }
+
+    /* TL;DR box */
+    .tldr { background: var(--surface); border: 1px solid var(--accent);
+            border-left: 4px solid var(--accent); border-radius: 6px;
+            padding: 1rem 1.2rem; margin: 1.5rem 0; }
+    .tldr h3 { color: var(--accent); margin: 0 0 .5rem; font-size: .9rem;
+               text-transform: uppercase; letter-spacing: .1em; }
+    .tldr ul { padding-left: 1.2rem; }
+    .tldr li { margin-bottom: .3rem; }
+
+    /* Key-value info grid */
+    .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                 gap: .75rem; margin: 1rem 0 1.5rem; }
+    .info-card { background: var(--surface); border: 1px solid var(--border);
+                 border-radius: 6px; padding: .8rem 1rem; }
+    .info-card .label { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em;
+                        color: var(--muted); margin-bottom: .3rem; }
+    .info-card .value { font-size: 1.1rem; font-weight: 600; color: var(--accent);
+                        font-family: var(--font-mono); }
+
+    /* Code blocks */
+    pre { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+          padding: 1rem 1.2rem; overflow-x: auto; margin: 1rem 0; font-size: .85rem;
+          font-family: var(--font-mono); line-height: 1.5; }
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 3px;
+           padding: .15em .4em; font-size: .85em; font-family: var(--font-mono); }
+    pre code { background: none; border: none; padding: 0; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .9rem; }
+    th { background: var(--surface); color: var(--muted); font-weight: 600; text-align: left;
+         padding: .6rem .8rem; border: 1px solid var(--border); font-size: .8rem;
+         text-transform: uppercase; letter-spacing: .04em; }
+    td { padding: .6rem .8rem; border: 1px solid var(--border); vertical-align: top; }
+    tr:nth-child(even) td { background: rgba(255,255,255,.02); }
+
+    /* Chart containers */
+    .chart-wrap { background: var(--surface); border: 1px solid var(--border);
+                  border-radius: 8px; padding: 1.2rem; margin: 1.2rem 0; }
+    .chart-wrap h4 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+                     letter-spacing: .05em; margin-bottom: .8rem; }
+    .chart-wrap canvas { max-height: 320px; }
+
+    /* Mermaid diagrams */
+    .diagram-wrap { background: var(--surface); border: 1px solid var(--border);
+                    border-radius: 8px; padding: 1.5rem; margin: 1.2rem 0;
+                    overflow-x: auto; text-align: center; }
+    .diagram-wrap h4 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+                       letter-spacing: .05em; margin-bottom: 1rem; text-align: left; }
+
+    /* Callout boxes */
+    .callout { border-radius: 6px; padding: .8rem 1rem; margin: 1rem 0;
+               border-left: 4px solid; }
+    .callout.note { background: rgba(88,166,255,.07); border-color: var(--accent); }
+    .callout.tip  { background: rgba(63,185,80,.07);  border-color: var(--green); }
+    .callout.warn { background: rgba(210,153,34,.07); border-color: var(--yellow); }
+    .callout.key  { background: rgba(248,81,73,.07);  border-color: var(--red); }
+    .callout strong { display: block; margin-bottom: .3rem; font-size: .85rem;
+                      text-transform: uppercase; letter-spacing: .04em; }
+
+    /* Reference list */
+    .refs ol { padding-left: 1.5rem; }
+    .refs li { margin-bottom: .5rem; font-size: .9rem; color: var(--muted); }
+    .refs a { color: var(--accent); }
+
+    /* TOC */
+    .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+           padding: 1rem 1.2rem; margin: 0 0 2rem; font-size: .9rem; }
+    .toc h3 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+              letter-spacing: .1em; margin-bottom: .6rem; }
+    .toc ol { padding-left: 1.3rem; }
+    .toc li { margin-bottom: .25rem; }
+    .toc a { color: var(--muted); text-decoration: none; }
+    .toc a:hover { color: var(--accent); }
+
+    /* Footer */
+    .report-footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border);
+                     color: var(--muted); font-size: .8rem; display: flex; justify-content: space-between; }
+
+    /* List styles within content */
+    ul.content-list { padding-left: 1.5rem; margin-bottom: 1rem; }
+    ul.content-list li { margin-bottom: .3rem; }
+  </style>
+</head>
+<body>
+<div class="page-wrap">
+
+  <a href="../index.html" class="back-link">← Back to CJ-Note</a>
+
+  <header class="report-header">
+    <h1>vLLM 整体设计综述</h1>
+    <div class="meta">
+      <span>TYPE: REPO ANALYSIS</span>
+      <span>DATE: 2026-04-10</span>
+      <span>基于 vLLM v1 架构</span>
+    </div>
+  </header>
+
+  <!-- TL;DR -->
+  <div class="tldr">
+    <h3>TL;DR</h3>
+    <ul>
+      <li>vLLM 的核心创新是 <strong>PagedAttention</strong>，借鉴 OS 虚拟内存分页管理 KV Cache，彻底消除内存碎片，GPU 利用率可提升 2–4×。</li>
+      <li>v1 架构将引擎拆分为<strong>前端（LLMEngine）</strong>与<strong>后端（EngineCore）</strong>两个独立进程，通过 ZMQ + msgpack 通信，前端负责 Tokenize/Detokenize，后端专注调度与执行。</li>
+      <li>调度器原生支持 <strong>Continuous Batching</strong> 和 <strong>Chunked Prefill</strong>，统一以 <code>num_computed_tokens</code> 追踪每个请求状态，不再区分 Prefill/Decode 两阶段。</li>
+      <li>框架支持 <strong>TP / PP / DP / EP / CP</strong> 五种并行范式，以及 FP8、AWQ、GPTQ、Marlin 等主流量化方案，覆盖 NVIDIA、AMD、Intel、TPU 多种硬件。</li>
+      <li>通过 200+ 模型支持（Decoder-Only、MoE、MLA、SSM、VLM）、推测解码（EAGLE/Medusa/N-gram）、P/D 分离、结构化输出等丰富 Feature 矩阵，vLLM 已成为生产级 LLM 服务的事实标准。</li>
+    </ul>
+  </div>
+
+  <!-- Table of Contents -->
+  <nav class="toc">
+    <h3>Contents</h3>
+    <ol>
+      <li><a href="#sec1">项目定位与核心价值</a></li>
+      <li><a href="#sec2">整体架构分层</a></li>
+      <li><a href="#sec3">模块全景图</a></li>
+      <li><a href="#sec4">核心 Feature 矩阵</a></li>
+      <li><a href="#sec5">进程与通信模型</a></li>
+      <li><a href="#sec6">请求全链路概览</a></li>
+      <li><a href="#sec7">技术演进：v0 → v1</a></li>
+      <li><a href="#sec8">各模块报告索引</a></li>
+    </ol>
+  </nav>
+
+  <!-- ── 1. 项目定位与核心价值 ─────────────────────── -->
+  <section id="sec1">
+    <h2>1. 项目定位与核心价值</h2>
+
+    <p>
+      vLLM 是一个面向大语言模型（LLM）推理的<strong>高吞吐量、低延迟</strong>开源服务框架，由 UC Berkeley 主导开发。
+      其核心技术贡献是 <strong>PagedAttention</strong>，通过借鉴操作系统虚拟内存的分页思想来管理 KV Cache，
+      彻底解决了传统推理框架中 KV Cache 的内存碎片化和静态预分配问题。
+    </p>
+
+    <h3>核心技术贡献</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>技术</th>
+          <th>解决的问题</th>
+          <th>效果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>PagedAttention</strong></td>
+          <td>KV Cache 碎片化、静态预分配浪费</td>
+          <td>GPU 利用率提升 2-4×</td>
+        </tr>
+        <tr>
+          <td><strong>Automatic Prefix Caching (APC)</strong></td>
+          <td>相同前缀重复计算</td>
+          <td>System Prompt 计算消除</td>
+        </tr>
+        <tr>
+          <td><strong>Chunked Prefill</strong></td>
+          <td>Prefill 阻塞 Decode，延迟尖刺</td>
+          <td>TTFT/TPOT 均衡</td>
+        </tr>
+        <tr>
+          <td><strong>Continuous Batching</strong></td>
+          <td>静态批处理 GPU 空转</td>
+          <td>吞吐量最大化</td>
+        </tr>
+        <tr>
+          <td><strong>推测解码 (Spec Decode)</strong></td>
+          <td>Decode 阶段内存带宽瓶颈</td>
+          <td>2-3× 速度提升</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ── 2. 整体架构分层 ───────────────────────────── -->
+  <section id="sec2">
+    <h2>2. 整体架构分层</h2>
+
+    <div class="diagram-wrap">
+      <h4>vLLM v1 整体架构分层（graph TD）</h4>
+      <div class="mermaid">
+graph TD
+    subgraph EntryLayer["用户接口层 (Entrypoints)"]
+        LLM["LLM<br/>(离线批处理)"]
+        ALLM["AsyncLLM<br/>(异步流式)"]
+        OAI["OpenAI API Server"]
+        GRPC["gRPC Server"]
+        CLI["CLI Tools / vllm serve"]
+    end
+
+    subgraph FrontendLayer["前端引擎层 (Frontend Engine)"]
+        IP["InputProcessor<br/>• Tokenize<br/>• 多模态预处理"]
+        ECC["EngineCoreClient<br/>• ZMQ / InProc<br/>• 请求序列化"]
+        OP["OutputProcessor<br/>• Detokenize<br/>• 停止条件检测"]
+        IP --> ECC
+    end
+
+    subgraph BackendLayer["后端引擎核心 (EngineCore)"]
+        SCHED["Scheduler<br/>WAITING队列 → RUNNING队列 → 抢占回收 → 完成<br/>Chunked Prefill / 优先级排序 / 内存感知调度"]
+        KVM["KVCacheManager<br/>BlockPool (物理块池) ↔ cached_blocks (APC索引)<br/>allocate_slots() / free_slots() / 引用计数"]
+        EXEC["Executor<br/>UniProcExecutor / MultiprocExecutor / RayExecutor"]
+        SCHED -->|SchedulerOutput| KVM
+        KVM --> EXEC
+    end
+
+    subgraph WorkerLayer["Worker 层 (每 GPU 一个进程)"]
+        W0["GPUWorker GPU-0<br/>└ GPUModelRunner<br/>  ├ InputBatch<br/>  ├ AttentionBackend<br/>  ├ model.forward()<br/>  └ Sampler"]
+        W1["GPUWorker GPU-1"]
+        WN["GPUWorker GPU-N"]
+        W0 <-->|NCCL| W1
+        W1 <-->|NCCL| WN
+    end
+
+    EntryLayer -->|"Python API / HTTP / gRPC"| FrontendLayer
+    FrontendLayer -->|"ZMQ (ipc:// 或 tcp://) + msgpack"| BackendLayer
+    BackendLayer -->|"collective_rpc (torch.distributed)"| WorkerLayer
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 3. 模块全景图 ─────────────────────────────── -->
+  <section id="sec3">
+    <h2>3. 模块全景图</h2>
+
+    <h3>3.1 Python 包结构</h3>
+    <pre><code>vllm/
+├── v1/                         ← 现行核心架构 (v1)
+│   ├── engine/                 ← 引擎层
+│   │   ├── llm_engine.py       ← LLMEngine (同步)
+│   │   ├── async_llm.py        ← AsyncLLM (异步)
+│   │   ├── core.py             ← EngineCore (调度+执行内核)
+│   │   ├── core_client.py      ← EngineCoreClient (IPC 抽象)
+│   │   ├── input_processor.py  ← InputProcessor
+│   │   ├── output_processor.py ← OutputProcessor
+│   │   ├── detokenizer.py      ← 增量 Detokenize
+│   │   ├── logprobs.py         ← logprobs 处理
+│   │   └── coordinator.py      ← 多实例协调
+│   │
+│   ├── core/                   ← 调度 + KV Cache
+│   │   ├── sched/
+│   │   │   ├── scheduler.py    ← 主调度器
+│   │   │   ├── interface.py    ← 调度器抽象接口
+│   │   │   ├── output.py       ← SchedulerOutput 数据结构
+│   │   │   └── request_queue.py← 请求优先队列
+│   │   ├── kv_cache_manager.py ← KVCacheManager
+│   │   ├── block_pool.py       ← 物理块池 + APC 索引
+│   │   ├── kv_cache_utils.py   ← 块哈希工具
+│   │   ├── kv_cache_coordinator.py ← 多 KV 类型协调
+│   │   ├── single_type_kv_cache_manager.py
+│   │   └── encoder_cache_manager.py
+│   │
+│   ├── worker/                 ← Worker 层
+│   │   ├── gpu_worker.py       ← GPUWorker 主类
+│   │   ├── gpu_model_runner.py ← GPUModelRunner (核心推理)
+│   │   ├── gpu_input_batch.py  ← InputBatch / CachedRequestState
+│   │   ├── cpu_worker.py       ← CPU Worker
+│   │   ├── xpu_worker.py       ← XPU Worker (Intel)
+│   │   └── gpu/                ← GPU 专用组件
+│   │       ├── model_runner.py
+│   │       ├── spec_decode/    ← 推测解码 Worker 侧
+│   │       └── mm/             ← 多模态
+│   │
+│   ├── executor/               ← Executor 层
+│   │   ├── abstract.py         ← Executor 抽象基类
+│   │   ├── uniproc.py          ← 单进程 Executor
+│   │   ├── multiproc.py        ← 多进程 Executor
+│   │   └── ray_executor.py     ← Ray Executor
+│   │
+│   ├── attention/              ← Attention Backend
+│   │   ├── backends/           ← 各后端实现
+│   │   │   ├── flash_attn.py
+│   │   │   ├── flashinfer.py
+│   │   │   ├── triton_attn.py
+│   │   │   ├── rocm_*.py
+│   │   │   └── mla.py          ← MLA (DeepSeek)
+│   │   ├── ops/                ← Triton/CUDA 算子
+│   │   │   ├── paged_attn.py
+│   │   │   ├── prefix_prefill.py
+│   │   │   ├── flashmla.py
+│   │   │   └── triton_*.py
+│   │   └── selector.py         ← 后端自动选择
+│   │
+│   ├── spec_decode/            ← 推测解码
+│   │   ├── eagle.py            ← EAGLE 提议器
+│   │   ├── ngram.py            ← N-gram 提议器
+│   │   ├── medusa.py           ← Medusa 提议器
+│   │   └── rejection_sampler.py← 拒绝采样
+│   │
+│   ├── kv_offload/             ← KV Cache Offloading
+│   │   ├── cpu/                ← CPU 卸载
+│   │   └── worker/             ← Offload Worker
+│   │
+│   ├── structured_output/      ← 结构化输出
+│   │   ├── grammar_compiler.py ← 语法编译
+│   │   └── bitmask.py          ← Token 掩码生成
+│   │
+│   └── sample/                 ← 采样
+│       ├── sampler.py
+│       └── logits_processor/
+│
+├── model_executor/             ← 模型层
+│   ├── models/                 ← 200+ 模型实现
+│   │   ├── llama.py
+│   │   ├── qwen2.py
+│   │   ├── deepseek_v2.py      ← MLA
+│   │   ├── mamba*.py
+│   │   └── ...
+│   └── layers/                 ← 通用并行层
+│       ├── attention.py
+│       ├── linear.py           ← ColumnParallel/RowParallel
+│       ├── moe/                ← Mixture of Experts
+│       └── quantization/       ← 量化层
+│
+├── entrypoints/                ← 用户接口层
+│   ├── llm.py                  ← LLM 类 (离线)
+│   ├── openai/                 ← OpenAI 兼容 API
+│   │   ├── api_server.py       ← FastAPI 主服务
+│   │   ├── serving_*.py        ← 各端点处理器
+│   │   └── protocol.py         ← OpenAI 协议类型
+│   └── grpc/                   ← gRPC 服务
+│
+├── distributed/                ← 分布式通信
+│   ├── parallel_state.py       ← 进程组状态管理
+│   ├── device_communicators/   ← 设备通信器
+│   │   ├── cuda_communicator.py
+│   │   ├── pynccl.py
+│   │   ├── custom_all_reduce.py
+│   │   └── all2all.py          ← All-to-All (EP)
+│   └── kv_transfer/            ← P/D 分离 KV 传输
+│       ├── kv_connector/
+│       └── kv_lookup_buffer/
+│
+├── config/                     ← 配置系统
+│   └── (ModelConfig, CacheConfig, SchedulerConfig, ...)
+│
+├── compilation/                ← 编译优化
+│   ├── cudagraph.py            ← CUDAGraph 管理
+│   └── backends.py             ← torch.compile 后端
+│
+├── platforms/                  ← 硬件平台抽象
+│   ├── cuda.py
+│   ├── rocm.py
+│   ├── cpu.py
+│   └── tpu.py
+│
+├── lora/                       ← LoRA 适配器
+├── multimodal/                 ← 多模态处理
+├── tokenizers/                 ← Tokenizer 封装
+├── quantization/               ← 量化方法注册
+└── reasoning/                  ← 推理链 (CoT/ReAct)
+
+csrc/                           ← C++/CUDA 内核
+├── attention/                  ← Attention CUDA 内核
+│   └── mla/                    ← MLA 内核
+├── quantization/               ← 量化 CUDA 内核
+│   ├── awq/
+│   ├── gptq/
+│   ├── fp8/
+│   ├── marlin/
+│   └── gguf/
+├── moe/                        ← MoE CUDA 内核
+├── mamba/                      ← Mamba SSM 内核
+├── quickreduce/                ← 快速 AllReduce
+└── cpu/                        ← CPU 优化内核</code></pre>
+  </section>
+
+  <!-- ── 4. 核心 Feature 矩阵 ──────────────────────── -->
+  <section id="sec4">
+    <h2>4. 核心 Feature 矩阵</h2>
+
+    <h3>4.1 推理能力</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th>说明</th>
+          <th>关键文件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>PagedAttention</strong></td>
+          <td>非连续 KV Cache 分页存储，消除碎片</td>
+          <td><code>v1/core/block_pool.py</code></td>
+        </tr>
+        <tr>
+          <td><strong>Continuous Batching</strong></td>
+          <td>动态添加/移除请求，GPU 持续满负荷</td>
+          <td><code>v1/core/sched/scheduler.py</code></td>
+        </tr>
+        <tr>
+          <td><strong>Chunked Prefill</strong></td>
+          <td>Prefill 分块执行，与 Decode 混合 Batch</td>
+          <td>Scheduler 配置</td>
+        </tr>
+        <tr>
+          <td><strong>Automatic Prefix Caching</strong></td>
+          <td>前缀 KV 自动复用（System Prompt 共享）</td>
+          <td><code>v1/core/block_pool.py</code></td>
+        </tr>
+        <tr>
+          <td><strong>推测解码</strong></td>
+          <td>EAGLE/Draft/N-gram/Medusa 多种方法</td>
+          <td><code>v1/spec_decode/</code></td>
+        </tr>
+        <tr>
+          <td><strong>结构化输出</strong></td>
+          <td>JSON Schema / Regex / GBNF Grammar</td>
+          <td><code>v1/structured_output/</code></td>
+        </tr>
+        <tr>
+          <td><strong>LoRA 服务</strong></td>
+          <td>动态加载多个 LoRA 适配器</td>
+          <td><code>vllm/lora/</code></td>
+        </tr>
+        <tr>
+          <td><strong>KV Cache Offload</strong></td>
+          <td>KV Cache 卸载到 CPU/NVMe</td>
+          <td><code>v1/kv_offload/</code></td>
+        </tr>
+        <tr>
+          <td><strong>P/D 分离</strong></td>
+          <td>Prefill 与 Decode 节点物理分离</td>
+          <td><code>distributed/kv_transfer/</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>4.2 模型支持</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>类别</th>
+          <th>代表模型</th>
+          <th>特殊支持</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Decoder-Only LLM</strong></td>
+          <td>Llama-3, Qwen2/3, Mistral, DeepSeek</td>
+          <td>主力场景</td>
+        </tr>
+        <tr>
+          <td><strong>MoE 模型</strong></td>
+          <td>DeepSeek-V3, Mixtral, Qwen-MoE</td>
+          <td>Expert Parallelism</td>
+        </tr>
+        <tr>
+          <td><strong>MLA 模型</strong></td>
+          <td>DeepSeek-V2/V3</td>
+          <td>MLA Attention Backend</td>
+        </tr>
+        <tr>
+          <td><strong>SSM 模型</strong></td>
+          <td>Mamba, Jamba</td>
+          <td>独立 Mamba 后端</td>
+        </tr>
+        <tr>
+          <td><strong>视觉语言模型</strong></td>
+          <td>Qwen2-VL, LLaVA, InternVL</td>
+          <td>多模态 Pipeline</td>
+        </tr>
+        <tr>
+          <td><strong>Encoder-Decoder</strong></td>
+          <td>T5, Bart</td>
+          <td>独立 Encoder Cache</td>
+        </tr>
+        <tr>
+          <td><strong>Embedding 模型</strong></td>
+          <td>E5, BGE</td>
+          <td>Pool 任务</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>4.3 量化支持</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>方法</th>
+          <th>精度</th>
+          <th>内核</th>
+          <th>备注</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>FP8</strong></td>
+          <td>W8A8</td>
+          <td>CUTLASS/Triton</td>
+          <td>推荐，Hopper 原生</td>
+        </tr>
+        <tr>
+          <td><strong>AWQ</strong></td>
+          <td>W4A16</td>
+          <td>CUTLASS</td>
+          <td>激活感知</td>
+        </tr>
+        <tr>
+          <td><strong>GPTQ</strong></td>
+          <td>W4/8A16</td>
+          <td>Marlin/ExLlama</td>
+          <td>广泛兼容</td>
+        </tr>
+        <tr>
+          <td><strong>Marlin</strong></td>
+          <td>W4A16</td>
+          <td>专用 CUDA</td>
+          <td>高性能</td>
+        </tr>
+        <tr>
+          <td><strong>GGUF</strong></td>
+          <td>Q4~Q8</td>
+          <td>llama.cpp</td>
+          <td>兼容</td>
+        </tr>
+        <tr>
+          <td><strong>BitsAndBytes</strong></td>
+          <td>NF4/INT8</td>
+          <td>BnB</td>
+          <td>灵活</td>
+        </tr>
+        <tr>
+          <td><strong>KV FP8</strong></td>
+          <td>KV Cache FP8</td>
+          <td>独立</td>
+          <td>显存减半</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>4.4 分布式并行</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>并行类型</th>
+          <th>配置参数</th>
+          <th>原理</th>
+          <th>适用场景</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Tensor Parallelism (TP)</strong></td>
+          <td><code>tensor_parallel_size</code></td>
+          <td>权重按列/行切分，AllReduce</td>
+          <td>单节点多卡</td>
+        </tr>
+        <tr>
+          <td><strong>Pipeline Parallelism (PP)</strong></td>
+          <td><code>pipeline_parallel_size</code></td>
+          <td>模型按层切段流水</td>
+          <td>多节点大模型</td>
+        </tr>
+        <tr>
+          <td><strong>Data Parallelism (DP)</strong></td>
+          <td><code>data_parallel_size</code></td>
+          <td>多副本独立处理请求</td>
+          <td>高吞吐服务</td>
+        </tr>
+        <tr>
+          <td><strong>Expert Parallelism (EP)</strong></td>
+          <td><code>enable_expert_parallel</code></td>
+          <td>MoE 专家分布多卡</td>
+          <td>MoE 大模型</td>
+        </tr>
+        <tr>
+          <td><strong>Context Parallelism (CP)</strong></td>
+          <td><code>prefill_context_parallel_size</code></td>
+          <td>长序列 KV 跨卡分割</td>
+          <td>超长上下文</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>4.5 硬件支持</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>硬件</th>
+          <th>支持状态</th>
+          <th>Attention 后端</th>
+          <th>备注</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>NVIDIA GPU</strong></td>
+          <td>完整支持</td>
+          <td>FlashAttention-2 / FlashInfer</td>
+          <td>主要开发平台</td>
+        </tr>
+        <tr>
+          <td><strong>AMD GPU (ROCm)</strong></td>
+          <td>完整支持</td>
+          <td>ROCm FA / AITER</td>
+          <td>同等功能</td>
+        </tr>
+        <tr>
+          <td><strong>Intel CPU</strong></td>
+          <td>支持</td>
+          <td>CPU Kernel</td>
+          <td>低吞吐场景</td>
+        </tr>
+        <tr>
+          <td><strong>Intel XPU (Gaudi)</strong></td>
+          <td>支持</td>
+          <td>XPU Kernel</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td><strong>Google TPU</strong></td>
+          <td>支持</td>
+          <td>XLA</td>
+          <td>实验性</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>4.6 接口能力</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>接口</th>
+          <th>协议</th>
+          <th>功能</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>OpenAI API</strong></td>
+          <td>HTTP/SSE</td>
+          <td>/v1/completions, /v1/chat/completions, /v1/embeddings</td>
+        </tr>
+        <tr>
+          <td><strong>gRPC API</strong></td>
+          <td>gRPC/Protobuf</td>
+          <td>高性能内部调用</td>
+        </tr>
+        <tr>
+          <td><strong>Python LLM</strong></td>
+          <td>同步</td>
+          <td>离线批量推理</td>
+        </tr>
+        <tr>
+          <td><strong>Python AsyncLLM</strong></td>
+          <td>异步生成器</td>
+          <td>流式推理服务</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ── 5. 进程与通信模型 ─────────────────────────── -->
+  <section id="sec5">
+    <h2>5. 进程与通信模型</h2>
+
+    <h3>5.1 进程拓扑</h3>
+
+    <div class="diagram-wrap">
+      <h4>vLLM v1 进程拓扑图</h4>
+      <div class="mermaid">
+graph TD
+    subgraph APIProc["API Server 进程 / 用户进程"]
+        HTTP["HTTP Server / LLM.generate()"]
+    end
+
+    subgraph FrontendProc["LLMEngine 进程 (前端)"]
+        IP2["InputProcessor<br/>(Tokenize/多模态)"]
+        ECC2["EngineCoreClient<br/>(ZMQ PUSH/PULL)"]
+        OP2["OutputProcessor<br/>(Detokenize/Stop)"]
+        IP2 --> ECC2
+        ECC2 --> OP2
+    end
+
+    subgraph BackendProc["EngineCore 进程 (后端)"]
+        SCHED2["Scheduler + KVCacheManager + Executor"]
+    end
+
+    subgraph WorkerGPU["Worker 进程层"]
+        WG0["Worker GPU 0 (TP0)"]
+        WG1["Worker GPU 1 (TP1)"]
+        WGN["Worker GPU N (TPN)"]
+        WG0 <-->|NCCL| WG1
+        WG1 <-->|NCCL| WGN
+    end
+
+    APIProc -->|"Python API"| FrontendProc
+    FrontendProc -->|"ZMQ ipc:// 或 tcp://<br/>msgpack 序列化"| BackendProc
+    BackendProc -->|"collective_rpc<br/>(torch.distributed NCCL/Gloo)"| WorkerGPU
+      </div>
+    </div>
+
+    <h3>5.2 通信协议</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>通道</th>
+          <th>协议</th>
+          <th>序列化</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>前端 ↔ 后端（请求）</td>
+          <td>ZMQ PUSH</td>
+          <td>msgpack</td>
+          <td>单向发送请求</td>
+        </tr>
+        <tr>
+          <td>前端 ↔ 后端（响应）</td>
+          <td>ZMQ PULL</td>
+          <td>msgpack</td>
+          <td>单向接收输出</td>
+        </tr>
+        <tr>
+          <td>Executor ↔ Worker</td>
+          <td>torch.distributed RPC</td>
+          <td>Tensor / pickle</td>
+          <td>collective_rpc</td>
+        </tr>
+        <tr>
+          <td>Worker ↔ Worker (TP)</td>
+          <td>NCCL</td>
+          <td>原始 Tensor</td>
+          <td>AllReduce/AllGather</td>
+        </tr>
+        <tr>
+          <td>Worker ↔ Worker (PP)</td>
+          <td>NCCL/Gloo</td>
+          <td>IntermediateTensors</td>
+          <td>P2P Send/Recv</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ── 6. 请求全链路概览 ─────────────────────────── -->
+  <section id="sec6">
+    <h2>6. 请求全链路概览</h2>
+
+    <div class="diagram-wrap">
+      <h4>请求全链路时序（sequenceDiagram）</h4>
+      <div class="mermaid">
+sequenceDiagram
+    participant User as 用户
+    participant IP as InputProcessor
+    participant ECC as EngineCoreClient
+    participant EC as EngineCore
+    participant SCHED as Scheduler
+    participant EXEC as Executor
+    participant GMR as GPUModelRunner
+    participant OP as OutputProcessor
+
+    User->>IP: llm.generate(["Hello World"], SamplingParams)
+    IP->>IP: Tokenize / 多模态特征提取
+    IP->>ECC: EngineCoreRequest
+    ECC->>EC: ZMQ PUSH (msgpack)
+    EC->>SCHED: step() → schedule()
+    SCHED-->>EC: SchedulerOutput
+    EC->>EXEC: execute_model(SchedulerOutput)
+    EXEC->>GMR: collective_rpc
+    GMR->>GMR: 1. _update_states
+    GMR->>GMR: 2. _prepare_inputs
+    GMR->>GMR: 3. model.forward()
+    GMR->>GMR: 4. sampler()
+    GMR-->>EXEC: ModelRunnerOutput
+    EXEC-->>EC: ModelRunnerOutput
+    EC->>SCHED: update_from_outputs()
+    SCHED-->>EC: EngineCoreOutput
+    EC-->>ECC: ZMQ PULL (msgpack)
+    ECC->>OP: EngineCoreOutput
+    OP->>OP: Detokenize / 停止条件检测
+    OP-->>User: RequestOutput (outputs[0].outputs[0].text)
+      </div>
+    </div>
+
+    <div class="callout note">
+      <strong>Note</strong>
+      每个 <code>EngineCore.step()</code> 调用处理一个调度周期：Scheduler 决定当前 batch 中哪些请求参与执行（包括 Chunked Prefill 切片和 Decode token），KVCacheManager 分配/释放物理块，Executor 驱动所有 GPU Worker 并行执行一次 forward pass。
+    </div>
+  </section>
+
+  <!-- ── 7. 技术演进：v0 → v1 ──────────────────────── -->
+  <section id="sec7">
+    <h2>7. 技术演进：v0 → v1</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>方面</th>
+          <th>v0 (旧架构)</th>
+          <th>v1 (现行架构)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>请求状态</strong></td>
+          <td>Prefill/Decode 两阶段</td>
+          <td><code>num_computed_tokens</code> 统一视图</td>
+        </tr>
+        <tr>
+          <td><strong>引擎结构</strong></td>
+          <td>单进程</td>
+          <td>前端/后端 进程分离</td>
+        </tr>
+        <tr>
+          <td><strong>IPC 协议</strong></td>
+          <td>无（同进程）</td>
+          <td>ZMQ + msgpack</td>
+        </tr>
+        <tr>
+          <td><strong>Chunked Prefill</strong></td>
+          <td>有限支持</td>
+          <td>原生支持，统一调度</td>
+        </tr>
+        <tr>
+          <td><strong>APC</strong></td>
+          <td>基于 Sequence 哈希</td>
+          <td>基于 Block 哈希，更细粒度</td>
+        </tr>
+        <tr>
+          <td><strong>配置系统</strong></td>
+          <td>EngineArgs</td>
+          <td>VllmConfig（统一容器）</td>
+        </tr>
+        <tr>
+          <td><strong>Worker 通信</strong></td>
+          <td>复杂的 ray/multiproc 混用</td>
+          <td>collective_rpc 统一抽象</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout tip">
+      <strong>设计哲学</strong>
+      v1 的核心思想是"关注点分离"：前后端进程分离使得 CPU 密集的 Tokenize/Detokenize 不阻塞 GPU 调度循环；<code>num_computed_tokens</code> 的统一状态视图消除了 Prefill/Decode 分支逻辑，让 Chunked Prefill 成为一等公民；Block 级哈希 APC 比 Sequence 级哈希具有更细的复用粒度，尤其对长 System Prompt 场景效果显著。
+    </div>
+  </section>
+
+  <!-- ── 8. 各模块报告索引 ─────────────────────────── -->
+  <section id="sec8">
+    <h2>8. 各模块报告索引</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>编号</th>
+          <th>报告文件</th>
+          <th>覆盖模块</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>01</td>
+          <td><a href="01-vLLM-Engine-Scheduler.html" style="color: var(--accent);">01-vLLM-Engine-Scheduler.html</a></td>
+          <td>Engine 层（LLMEngine/AsyncLLM/EngineCore）、Scheduler</td>
+        </tr>
+        <tr>
+          <td>02</td>
+          <td><a href="02-vLLM-KV-Cache.html" style="color: var(--accent);">02-vLLM-KV-Cache.html</a></td>
+          <td>KVCacheManager、BlockPool、PagedAttention、APC</td>
+        </tr>
+        <tr>
+          <td>03</td>
+          <td><a href="03-vLLM-Worker-ModelRunner.html" style="color: var(--accent);">03-vLLM-Worker-ModelRunner.html</a></td>
+          <td>Worker、GPUModelRunner、Executor、CUDAGraph</td>
+        </tr>
+        <tr>
+          <td>04</td>
+          <td><a href="04-vLLM-Attention-Distributed.html" style="color: var(--accent);">04-vLLM-Attention-Distributed.html</a></td>
+          <td>Attention Backend、分布式并行（TP/PP/DP/EP/CP）</td>
+        </tr>
+        <tr>
+          <td>05</td>
+          <td><a href="05-vLLM-Entrypoints.html" style="color: var(--accent);">05-vLLM-Entrypoints.html</a></td>
+          <td>OpenAI API Server、gRPC、LLM/AsyncLLM 入口</td>
+        </tr>
+        <tr>
+          <td>06</td>
+          <td><a href="06-vLLM-Quantization.html" style="color: var(--accent);">06-vLLM-Quantization.html</a></td>
+          <td>量化方法、CUDA 内核、模型层量化集成</td>
+        </tr>
+        <tr>
+          <td>07</td>
+          <td><a href="07-vLLM-SpecDecode.html" style="color: var(--accent);">07-vLLM-SpecDecode.html</a></td>
+          <td>推测解码、EAGLE/Ngram/Medusa、拒绝采样</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <footer class="report-footer">
+    <span>CJ-Note · LLM Inference Research</span>
+    <span>Generated 2026-04-10</span>
+  </footer>
+</div>
+
+<script>
+  // Initialize Mermaid with dark theme
+  mermaid.initialize({ startOnLoad: true, theme: 'dark',
+    themeVariables: { background: '#161b22', primaryColor: '#1f6feb',
+                      primaryTextColor: '#e6edf3', lineColor: '#8b949e' }});
+</script>
+</body>
+</html>

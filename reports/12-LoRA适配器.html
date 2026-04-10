@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang LoRA 适配器深度解析">
+  <meta name="report-type"  content="repo">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang LoRA 适配器深度解析">
+  <meta name="report-type"  content="sglang">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+<title>SGLang LoRA 适配器深度解析</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}:root{--bg:#0d1117;--bg2:#161b22;--bg3:#1c2128;--border:#30363d;--text:#e6edf3;--text2:#8b949e;--text3:#656d76;--cyan:#39d0d8;--blue:#58a6ff;--green:#3fb950;--yellow:#e3b341;--orange:#f78166;--purple:#bc8cff;--red:#f85149;--font-mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace}html{scroll-behavior:smooth}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif;background:var(--bg);color:var(--text);line-height:1.75;font-size:16px}.page-wrap{display:grid;grid-template-columns:260px 1fr;min-height:100vh}@media(max-width:900px){.page-wrap{grid-template-columns:1fr}.sidebar{display:none}}.sidebar{position:sticky;top:0;height:100vh;overflow-y:auto;background:var(--bg2);border-right:1px solid var(--border);padding:24px 16px}.sidebar-brand{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:16px}.toc a{display:block;padding:6px 8px;font-size:13px;color:var(--text2);text-decoration:none;border-radius:6px;margin-bottom:2px}.toc a:hover{background:var(--bg3);color:var(--cyan)}main{max-width:960px;margin:0 auto;padding:48px 32px}h1{font-size:2.2rem;margin-bottom:8px;background:linear-gradient(135deg,var(--cyan),var(--blue));-webkit-background-clip:text;-webkit-text-fill-color:transparent}.subtitle{color:var(--text2);font-size:1rem;margin-bottom:40px}h2{font-size:1.5rem;color:var(--cyan);margin:48px 0 16px;padding-bottom:8px;border-bottom:1px solid var(--border)}h3{font-size:1.15rem;color:var(--blue);margin:32px 0 12px}h4{font-size:1rem;color:var(--purple);margin:24px 0 8px}p,li{margin-bottom:12px}ul,ol{padding-left:24px}a{color:var(--blue);text-decoration:none}.card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px;margin:16px 0}table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px}th,td{padding:10px 14px;text-align:left;border:1px solid var(--border)}th{background:var(--bg3);color:var(--cyan)}td{background:var(--bg2)}code{font-family:var(--font-mono);background:var(--bg3);padding:2px 6px;border-radius:4px;font-size:0.9em;color:var(--orange)}pre{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:16px;overflow-x:auto;margin:16px 0;font-size:13px}pre code{background:none;padding:0;color:var(--text)}.mermaid{background:var(--bg2);border-radius:12px;padding:20px;margin:16px 0;display:flex;justify-content:center}.highlight{background:rgba(57,208,216,0.08);border-left:3px solid var(--cyan);padding:16px 20px;border-radius:0 8px 8px 0;margin:16px 0}
+</style>
+</head>
+<body>
+<div class="page-wrap">
+<aside class="sidebar">
+<div class="sidebar-brand">SGLang LoRA 适配器</div>
+<nav class="toc">
+<a href="#s1">1. 架构总览</a>
+<a href="#s2">2. LoRA 配置与适配器</a>
+<a href="#s3">3. LoRA Manager 管理器</a>
+<a href="#s4">4. 层级封装与 TP 切分</a>
+<a href="#s5">5. 内存池与驱逐策略</a>
+<a href="#s6">6. Triton 计算后端</a>
+<a href="#s7">7. Multi-LoRA 批处理</a>
+<a href="#s8">8. 关键数据流</a>
+</nav>
+</aside>
+<main>
+
+<h1>SGLang LoRA 适配器深度解析</h1>
+<p class="subtitle">集成 S-LoRA / Punica 的千级并发 LoRA 服务架构 -- 源码级分析</p>
+
+<!-- ============================================================ -->
+<h2 id="s1">1. 架构总览</h2>
+
+<p>SGLang 的 LoRA 子系统实现了论文 <strong>S-LoRA: Serving Thousands of Concurrent LoRA Adapters</strong> 和 <strong>Punica: Multi-Tenant LoRA Serving</strong> 的核心思想，能够在单个基座模型之上同时服务数千个不同的 LoRA 适配器。其核心设计包括：</p>
+
+<ul>
+<li>统一的 <strong>LoRA 内存池 (LoRAMemoryPool)</strong> -- 预分配 GPU 显存，按槽位管理多个适配器权重</li>
+<li><strong>Segment GEMM</strong> 计算核心 -- 通过 Triton 内核实现异构 rank 的批量矩阵乘法</li>
+<li><strong>LRU/FIFO 驱逐策略</strong> -- 当活跃适配器数超过槽位时自动替换</li>
+<li><strong>Tensor Parallel 切分</strong> -- LoRA 权重按 TP 维度正确分片</li>
+</ul>
+
+<div class="mermaid">
+graph TB
+    subgraph "LoRA 子系统全景"
+        A["LoRAConfig<br/>适配器配置解析"] --> B["LoRAAdapter<br/>权重加载 & 归一化"]
+        B --> C["LoRAManager<br/>生命周期管理"]
+        C --> D["LoRAMemoryPool<br/>GPU 显存池"]
+        C --> E["LoRA Layers<br/>层级封装"]
+        D --> F["EvictionPolicy<br/>LRU / FIFO 驱逐"]
+        E --> G["TritonLoRABackend<br/>Segment GEMM 内核"]
+        G --> H["sgemm_lora_a<br/>sgemm_lora_b<br/>qkv_lora_b<br/>gate_up_lora_b"]
+    end
+    style A fill:#1c2128,stroke:#39d0d8,color:#e6edf3
+    style C fill:#1c2128,stroke:#58a6ff,color:#e6edf3
+    style D fill:#1c2128,stroke:#3fb950,color:#e6edf3
+    style G fill:#1c2128,stroke:#f78166,color:#e6edf3
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s2">2. LoRA 配置与适配器</h2>
+
+<h3>2.1 LoRAConfig -- 配置解析</h3>
+
+<p><code>LoRAConfig</code> 负责从 HuggingFace PEFT 格式的 <code>adapter_config.json</code> 中加载适配器元信息：</p>
+
+<table>
+<tr><th>属性</th><th>来源</th><th>说明</th></tr>
+<tr><td><code>r</code></td><td>adapter_config.json</td><td>LoRA 秩 (rank)</td></tr>
+<tr><td><code>lora_alpha</code></td><td>adapter_config.json</td><td>缩放因子 alpha</td></tr>
+<tr><td><code>target_modules</code></td><td>adapter_config.json</td><td>应用 LoRA 的模块列表</td></tr>
+<tr><td><code>lora_added_tokens_size</code></td><td>added_tokens.json</td><td>额外词表大小</td></tr>
+</table>
+
+<p>配置支持两种加载方式：从本地/远程路径加载 (<code>snapshot_download</code>) 或从字典直接构造 (<code>from_dict</code>)。</p>
+
+<h3>2.2 LoRAAdapter -- 权重管理</h3>
+
+<p><code>LoRAAdapter</code> 是单个适配器的权重容器。每个适配器包含：</p>
+
+<ul>
+<li>按层组织的 <code>LoRALayer</code> 列表（与基座模型层数一致）</li>
+<li><code>embedding_layers</code> -- embed_tokens 和 lm_head 的 LoRA 权重</li>
+<li><code>added_tokens_embeddings</code> -- 额外词汇的嵌入权重</li>
+</ul>
+
+<div class="highlight">
+<strong>权重归一化关键逻辑：</strong>SGLang 将独立的 q_proj / k_proj / v_proj 权重合并为统一的 <code>qkv_proj</code>，将 gate_proj / up_proj 合并为 <code>gate_up_proj</code>。若适配器只有 q_proj 和 v_proj（无 k_proj），系统自动补零。对于已经 stacked 的权重（如 qkv_proj），LoRA_A 重复 3 倍以匹配维度。
+</div>
+
+<pre><code># 归一化: q/k/v -> qkv
+weights[qkv_name] = torch.cat((weights[q_name], k_proj_weight, weights[v_name]), 0)
+
+# 归一化: gate/up -> gate_up
+weights[gate_up_name] = torch.cat((weights[weight_name], weights[up_name]), 0)</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="s3">3. LoRA Manager 管理器</h2>
+
+<p><code>LoRAManager</code> 是 LoRA 子系统的中枢控制器，管理适配器的完整生命周期。</p>
+
+<div class="mermaid">
+graph LR
+    subgraph "LoRAManager 初始化流程"
+        A["init_state()"] --> B["init_lora_adapters()<br/>加载初始适配器"]
+        B --> C["init_lora_shapes()<br/>推断 rank & target_modules"]
+        C --> D["init_lora_modules()<br/>替换基座模型层"]
+        D --> E["init_memory_pool()<br/>创建 GPU 显存池"]
+        E --> F["update_lora_info()<br/>关联模块与缓冲区"]
+    end
+    style A fill:#1c2128,stroke:#39d0d8,color:#e6edf3
+    style E fill:#1c2128,stroke:#3fb950,color:#e6edf3
+</div>
+
+<h3>3.1 核心状态管理</h3>
+
+<table>
+<tr><th>字段</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>configs</code></td><td><code>Dict[str, LoRAConfig]</code></td><td>所有已加载的适配器配置</td></tr>
+<tr><td><code>loras</code></td><td><code>Dict[str, LoRAAdapter]</code></td><td>CPU 端适配器权重缓存</td></tr>
+<tr><td><code>lora_refs</code></td><td><code>Dict[str, LoRARef]</code></td><td>适配器元信息（名称、路径、是否固定）</td></tr>
+<tr><td><code>memory_pool</code></td><td><code>LoRAMemoryPool</code></td><td>GPU 显存池实例</td></tr>
+<tr><td><code>lora_modules</code></td><td><code>List[Dict]</code></td><td>每层的 LoRA 模块映射表</td></tr>
+<tr><td><code>lora_backend</code></td><td><code>BaseLoRABackend</code></td><td>计算后端（Triton/Torch/Chunked）</td></tr>
+</table>
+
+<h3>3.2 动态加载与卸载</h3>
+
+<p><code>load_lora_adapter()</code> 的完整流程：</p>
+<ol>
+<li>解析配置 (<code>LoRAConfig</code>) 并校验兼容性（rank、target_modules）</li>
+<li>创建 <code>LoRAAdapter</code> 实例并加载权重到 CPU</li>
+<li>若启用 overlap loading，将权重 pin 到 CPU 固定内存以加速 H2D 传输</li>
+<li>校验 pinned adapter 数量不超过 <code>max_loras_per_batch - 1</code>（防止饥饿）</li>
+</ol>
+
+<h3>3.3 批次准备</h3>
+
+<pre><code>def prepare_lora_batch(self, forward_batch: ForwardBatch):
+    # 1. 为 batch 中每个请求映射到内存池 buffer_id
+    weight_indices[i] = self.memory_pool.get_buffer_id(uid)
+    # 2. 收集各适配器的 rank 和 scaling
+    lora_ranks[weight_indices[i]] = lora.config.r
+    scalings[weight_indices[i]] = lora.scaling  # alpha / r
+    # 3. 传递给后端准备 Segment GEMM 参数
+    self.lora_backend.prepare_lora_batch(...)</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="s4">4. 层级封装与 TP 切分</h2>
+
+<p>SGLang 通过装饰器模式将基座模型的线性层替换为带 LoRA 的版本。<code>get_lora_layer()</code> 是工厂函数，根据基座层类型返回对应的 LoRA 包装层：</p>
+
+<table>
+<tr><th>基座层类型</th><th>LoRA 包装层</th><th>应用场景</th></tr>
+<tr><td><code>QKVParallelLinear</code></td><td><code>QKVParallelLinearWithLoRA</code></td><td>注意力 QKV 投影</td></tr>
+<tr><td><code>MergedColumnParallelLinear</code></td><td><code>MergedColumnParallelLinearWithLoRA</code></td><td>MLP gate_up 投影</td></tr>
+<tr><td><code>ColumnParallelLinear</code></td><td><code>ColumnParallelLinearWithLoRA</code></td><td>通用列并行线性层</td></tr>
+<tr><td><code>RowParallelLinear</code></td><td><code>RowParallelLinearWithLoRA</code></td><td>o_proj / down_proj</td></tr>
+<tr><td><code>VocabParallelEmbedding</code></td><td><code>VocabParallelEmbeddingWithLoRA</code></td><td>嵌入层</td></tr>
+<tr><td><code>ParallelLMHead</code></td><td><code>ParallelLMHeadWithLoRA</code></td><td>语言模型头</td></tr>
+</table>
+
+<h3>4.1 前向传播公式</h3>
+
+<div class="card">
+<p>对于线性层：<code>output = base_output + scaling * (x @ A^T) @ B^T</code></p>
+<p>对于嵌入层：<code>output = base_embedding(x) + scaling * lora_B @ lora_A[x]</code></p>
+<p>对于 LM Head：<code>output = hidden @ W^T + scaling * (hidden @ A^T) @ B^T</code></p>
+</div>
+
+<h3>4.2 Tensor Parallel 切分规则</h3>
+
+<div class="mermaid">
+graph TB
+    subgraph "TP 切分策略"
+        A["ColumnParallel<br/>(qkv_proj, gate_up)"] --> A1["A 不切分<br/>B 按输出维度切分"]
+        B["RowParallel<br/>(o_proj, down_proj)"] --> B1["A 按输入维度切分<br/>B 不切分"]
+        C["QKV Parallel"] --> C1["A 不切分<br/>B: Q 按 head 切分<br/>K/V 按 kv_head 切分"]
+        D["MergedColumn<br/>(gate_up_proj)"] --> D1["A 不切分<br/>B: gate 和 up 分别按 shard 切分"]
+    end
+    style A fill:#1c2128,stroke:#58a6ff,color:#e6edf3
+    style B fill:#1c2128,stroke:#3fb950,color:#e6edf3
+    style C fill:#1c2128,stroke:#f78166,color:#e6edf3
+    style D fill:#1c2128,stroke:#bc8cff,color:#e6edf3
+</div>
+
+<p>QKV 的 B 矩阵切分逻辑尤为精细，需要处理 GQA（Grouped Query Attention）场景中 <code>num_kv_head_replicas</code> 的映射：</p>
+
+<pre><code>kv_shard_id = tp_rank // num_kv_head_replicas
+B_q_shard = B[q_start_idx:q_end_idx, :]
+B_k_shard = B[q_size + kv_start_idx : q_size + kv_end_idx, :]
+B_v_shard = B[q_size + k_size + kv_start_idx : q_size + k_size + kv_end_idx, :]</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="s5">5. 内存池与驱逐策略</h2>
+
+<h3>5.1 LoRAMemoryPool 结构</h3>
+
+<p>内存池预分配固定大小的 GPU 显存缓冲区，通过 <strong>buffer_id</strong> 管理槽位映射：</p>
+
+<div class="mermaid">
+graph TB
+    subgraph "内存池缓冲区布局"
+        A["A_buffer<br/>Dict[module_name, List[Tensor]]<br/>shape: (max_loras, stacked*rank, input_dim)<br/>每层一个 Tensor"]
+        B["B_buffer<br/>Dict[module_name, List[Tensor]]<br/>shape: (max_loras, output_dim, rank)<br/>每层一个 Tensor"]
+        C["embedding_A/B_buffer<br/>embed_tokens 的 LoRA 权重"]
+        D["lm_head_A/B_buffer<br/>语言模型头的 LoRA 权重"]
+        E["new_embeddings_buffer<br/>额外词汇嵌入<br/>shape: (max_loras, added_tokens, hidden)"]
+    end
+    style A fill:#1c2128,stroke:#39d0d8,color:#e6edf3
+    style B fill:#1c2128,stroke:#58a6ff,color:#e6edf3
+</div>
+
+<h3>5.2 槽位管理</h3>
+
+<table>
+<tr><th>数据结构</th><th>说明</th></tr>
+<tr><td><code>uid_to_buffer_id</code></td><td>适配器 UID -> 缓冲槽位 ID</td></tr>
+<tr><td><code>buffer_id_to_uid</code></td><td>缓冲槽位 ID -> 适配器 UID（EmptySlot 表示空闲）</td></tr>
+</table>
+
+<p><code>prepare_lora_batch()</code> 负责将当前批次需要的适配器加载到 GPU：</p>
+
+<ol>
+<li>标记所有当前批次的 UID 为"已使用"（用于 LRU 追踪）</li>
+<li>遍历 UID 列表，未在池中的分配空闲槽位</li>
+<li>若无空闲槽位，触发驱逐</li>
+<li>从 CPU 缓存复制权重到 GPU 缓冲区（<code>copy_(weight, non_blocking=True)</code>）</li>
+</ol>
+
+<h3>5.3 驱逐策略</h3>
+
+<p>驱逐策略通过抽象基类 <code>EvictionPolicy</code> 实现，内置两种策略：</p>
+
+<table>
+<tr><th>策略</th><th>实现</th><th>选择逻辑</th></tr>
+<tr><td><strong>LRU</strong></td><td><code>LRUEvictionPolicy</code></td><td>基于 <code>OrderedDict</code>，每次使用移到末尾，驱逐最老的</td></tr>
+<tr><td><strong>FIFO</strong></td><td><code>FIFOEvictionPolicy</code></td><td>基于 <code>OrderedDict</code>，仅记录插入顺序，不更新访问</td></tr>
+</table>
+
+<div class="highlight">
+<strong>驱逐优先级：</strong>优先驱逐非 pinned 的 LoRA 适配器，仅当批次全为 LoRA 请求且无其他候选时才驱逐基座模型 (uid=None)。Pinned 适配器永远不会被驱逐。
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s6">6. Triton 计算后端</h2>
+
+<p>SGLang 提供多种 LoRA 计算后端：<code>triton</code>（默认）、<code>torch</code>、<code>chunked</code>。Triton 后端通过自定义 Triton 内核实现高效的 Segment GEMM。</p>
+
+<h3>6.1 后端接口 (BaseLoRABackend)</h3>
+
+<table>
+<tr><th>方法</th><th>说明</th><th>输入形状</th></tr>
+<tr><td><code>run_lora_a_sgemm</code></td><td>LoRA A 矩阵的分段 GEMM</td><td>x: (s, in_dim), W: (n_lora, c*r, in_dim)</td></tr>
+<tr><td><code>run_lora_b_sgemm</code></td><td>LoRA B 矩阵的分段 GEMM</td><td>x: (s, r), W: (n_lora, out_dim, r)</td></tr>
+<tr><td><code>run_qkv_lora</code></td><td>QKV 专用 LoRA 计算</td><td>A: (n, 3r, in), B: (n, q+2kv, r)</td></tr>
+<tr><td><code>run_gate_up_lora</code></td><td>Gate-Up 专用 LoRA 计算</td><td>A: (n, 2r, in), B: (n, 2*out, r)</td></tr>
+<tr><td><code>run_lora_a_embedding</code></td><td>嵌入层 LoRA A 查表</td><td>ids: (s,), W: (n, rank, vocab)</td></tr>
+</table>
+
+<h3>6.2 Triton 内核列表</h3>
+
+<table>
+<tr><th>内核文件</th><th>功能</th></tr>
+<tr><td><code>sgemm_lora_a.py</code></td><td>LoRA A 的 Segment GEMM（支持 stacked multiplier）</td></tr>
+<tr><td><code>sgemm_lora_b.py</code></td><td>LoRA B 的 Segment GEMM（加到 base_output）</td></tr>
+<tr><td><code>qkv_lora_b.py</code></td><td>QKV 专用 B 矩阵内核（处理不等长 Q/K/V 输出）</td></tr>
+<tr><td><code>gate_up_lora_b.py</code></td><td>Gate-Up 专用 B 矩阵内核</td></tr>
+<tr><td><code>embedding_lora_a.py</code></td><td>嵌入层 LoRA A 查表（支持额外 token）</td></tr>
+<tr><td><code>chunked_sgmv_shrink.py</code></td><td>分块 SGMV 收缩内核</td></tr>
+<tr><td><code>chunked_sgmv_expand.py</code></td><td>分块 SGMV 扩展内核</td></tr>
+</table>
+
+<h3>6.3 CUDA Graph 兼容</h3>
+
+<p>Triton 后端在初始化阶段预创建 <code>cuda_graph_batch_info</code>，包含固定大小的 <code>seg_indptr</code>、<code>weight_indices</code> 等张量。在 CUDA Graph 捕获期间，仅通过 <code>copy_(non_blocking=True)</code> 更新这些张量的内容，避免重新分配。</p>
+
+<!-- ============================================================ -->
+<h2 id="s7">7. Multi-LoRA 批处理</h2>
+
+<p>SGLang 的 Multi-LoRA 批处理核心是 <code>LoRABatchInfo</code> 数据结构，它为 Segment GEMM 内核提供所有必要的分段信息。</p>
+
+<h3>7.1 LoRABatchInfo 结构</h3>
+
+<table>
+<tr><th>字段</th><th>形状</th><th>说明</th></tr>
+<tr><td><code>seg_indptr</code></td><td>(num_segments + 1,)</td><td>每个分段的起止索引指针</td></tr>
+<tr><td><code>weight_indices</code></td><td>(num_segments,)</td><td>每个分段使用的适配器 buffer_id</td></tr>
+<tr><td><code>lora_ranks</code></td><td>(max_loras,)</td><td>各适配器的 LoRA 秩</td></tr>
+<tr><td><code>scalings</code></td><td>(max_loras,)</td><td>各适配器的缩放因子 (alpha/r)</td></tr>
+<tr><td><code>seg_lens</code></td><td>(num_segments,)</td><td>各分段的 token 数量</td></tr>
+<tr><td><code>max_len</code></td><td>int</td><td>当前批次最大分段长度</td></tr>
+<tr><td><code>permutation</code></td><td>(num_tokens,)</td><td>输入行的逻辑重排序（用于 chunked 后端）</td></tr>
+</table>
+
+<div class="mermaid">
+graph LR
+    subgraph "Multi-LoRA 批处理流程"
+        A["ForwardBatch<br/>包含 lora_ids 列表"] --> B["prepare_lora_batch()<br/>构建 weight_indices<br/>收集 ranks & scalings"]
+        B --> C["LoRABatchInfo<br/>seg_indptr, weight_indices..."]
+        C --> D["sgemm_lora_a<br/>分段 GEMM: x @ A^T"]
+        D --> E["sgemm_lora_b / qkv_lora_b<br/>分段 GEMM: y @ B^T + base"]
+    end
+    style C fill:#1c2128,stroke:#e3b341,color:#e6edf3
+</div>
+
+<h3>7.2 异构 Rank 支持</h3>
+
+<p>不同 LoRA 适配器可以有不同的 rank。内存池分配 <code>max_lora_rank</code> 大小的缓冲区，小 rank 的适配器仅使用前 <code>r</code> 行/列。Triton 内核通过 <code>lora_ranks</code> 数组动态确定每个适配器的实际计算范围。</p>
+
+<!-- ============================================================ -->
+<h2 id="s8">8. 关键数据流</h2>
+
+<div class="mermaid">
+sequenceDiagram
+    participant User as 用户请求
+    participant Sched as Scheduler
+    participant Mgr as LoRAManager
+    participant Pool as LoRAMemoryPool
+    participant Backend as TritonBackend
+    participant GPU as GPU 内核
+
+    User->>Sched: 请求携带 lora_id
+    Sched->>Mgr: fetch_new_loras({lora_ids})
+    Mgr->>Pool: prepare_lora_batch(cur_uids)
+    Pool->>Pool: mark_used(uid) for LRU
+
+    alt UID 不在 GPU 池中
+        Pool->>Pool: get_available_buffer_slot()
+        alt 池满
+            Pool->>Pool: eviction_policy.select_victim()
+            Pool->>Pool: 驱逐旧适配器
+        end
+        Pool->>Pool: load_lora_weight_to_buffer()
+        Note right of Pool: CPU -> GPU copy_<br/>(non_blocking=True)
+    end
+
+    Mgr->>Mgr: update_lora_info()<br/>set_lora_info() for each module
+    Sched->>Mgr: prepare_lora_batch(forward_batch)
+    Mgr->>Backend: prepare_lora_batch()<br/>构建 LoRABatchInfo
+
+    Note over GPU: Forward Pass
+    GPU->>Backend: forward -> apply_lora()
+    Backend->>GPU: sgemm_lora_a -> sgemm_lora_b
+    GPU->>User: 输出 (base + LoRA delta)
+</div>
+
+<h3>8.1 权重加载路径</h3>
+
+<div class="card">
+<ol>
+<li><strong>首次加载</strong>：HuggingFace checkpoint -> LoRAAdapter.initialize_weights() -> CPU 内存</li>
+<li><strong>Pin Memory</strong>（可选）：enable_lora_overlap_loading 时 pin 到固定内存</li>
+<li><strong>On-Demand</strong>：批次执行前，按需从 CPU 复制到 GPU LoRAMemoryPool</li>
+<li><strong>驱逐回收</strong>：GPU 槽位满时，LRU/FIFO 选择受害者，新权重覆盖旧槽位</li>
+</ol>
+</div>
+
+<h3>8.2 模块名称归一化映射</h3>
+
+<table>
+<tr><th>原始名称</th><th>归一化名称</th></tr>
+<tr><td>q_proj, k_proj, v_proj</td><td>qkv_proj</td></tr>
+<tr><td>gate_proj, up_proj</td><td>gate_up_proj</td></tr>
+<tr><td>embed_tokens, vocab_emb, embeddings, word_embeddings</td><td>embed_tokens</td></tr>
+<tr><td>lm_head, output</td><td>lm_head</td></tr>
+<tr><td>o_proj, down_proj</td><td>o_proj, down_proj (不变)</td></tr>
+</table>
+
+<h3>8.3 Stacked Multiply 系数</h3>
+
+<table>
+<tr><th>模块</th><th>系数 c</th><th>说明</th></tr>
+<tr><td>qkv_proj</td><td>3</td><td>A 矩阵的 rank 维度扩展 3 倍 (Q+K+V)</td></tr>
+<tr><td>gate_up_proj</td><td>2</td><td>A 矩阵的 rank 维度扩展 2 倍 (gate+up)</td></tr>
+<tr><td>其他</td><td>1</td><td>无堆叠</td></tr>
+</table>
+
+</main>
+</div>
+<script>mermaid.initialize({theme:'dark',themeVariables:{primaryColor:'#1c2128',primaryTextColor:'#e6edf3',primaryBorderColor:'#30363d',lineColor:'#58a6ff',secondaryColor:'#161b22',tertiaryColor:'#0d1117'}})</script>
+</body>
+</html>

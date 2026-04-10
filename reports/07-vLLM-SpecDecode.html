@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>vLLM 推测解码（Speculative Decoding）深度解析 — CJ-Note</title>
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="vLLM 推测解码（Speculative Decoding）深度解析">
+  <meta name="report-type"  content="repo">
+  <meta name="report-date"  content="2026-04-10">
+  <meta name="report-tags"  content="vllm, framework">
+  <meta name="report-desc"  content="vLLM v1 中 EAGLE/N-gram/Medusa 推测解码实现、拒绝采样机制、与调度器集成及性能分析">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #0d1117; --surface: #161b22; --border: #30363d;
+      --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+      --green: #3fb950; --yellow: #d29922; --red: #f85149;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font-sans);
+           line-height: 1.7; padding: 0 1rem; }
+    .page-wrap { max-width: 900px; margin: 0 auto; padding: 2rem 0 4rem; }
+
+    /* Header */
+    .report-header { border-bottom: 1px solid var(--border); padding-bottom: 1.5rem; margin-bottom: 2rem; }
+    .report-header h1 { font-size: 1.9rem; color: var(--accent); margin-bottom: .5rem; }
+    .meta { color: var(--muted); font-size: .85rem; display: flex; gap: 1.5rem; flex-wrap: wrap; }
+    .meta span::before { content: "• "; }
+    .meta span:first-child::before { content: ""; }
+    .back-link { display: inline-block; margin-bottom: 1rem; color: var(--muted);
+                 text-decoration: none; font-size: .85rem; }
+    .back-link:hover { color: var(--accent); }
+
+    /* Sections */
+    h2 { font-size: 1.3rem; color: var(--text); margin: 2.5rem 0 .8rem;
+         padding-bottom: .4rem; border-bottom: 1px solid var(--border); }
+    h3 { font-size: 1.05rem; color: var(--accent); margin: 1.5rem 0 .5rem; }
+    h4 { font-size: .95rem; color: var(--muted); margin: 1rem 0 .3rem; text-transform: uppercase;
+         letter-spacing: .05em; }
+    p { margin-bottom: 1rem; color: var(--text); }
+    ul, ol { padding-left: 1.4rem; margin-bottom: 1rem; }
+    li { margin-bottom: .3rem; }
+
+    /* TL;DR box */
+    .tldr { background: var(--surface); border: 1px solid var(--accent);
+            border-left: 4px solid var(--accent); border-radius: 6px;
+            padding: 1rem 1.2rem; margin: 1.5rem 0; }
+    .tldr h3 { color: var(--accent); margin: 0 0 .5rem; font-size: .9rem;
+               text-transform: uppercase; letter-spacing: .1em; }
+    .tldr ul { padding-left: 1.2rem; }
+    .tldr li { margin-bottom: .3rem; }
+
+    /* Key-value info grid */
+    .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                 gap: .75rem; margin: 1rem 0 1.5rem; }
+    .info-card { background: var(--surface); border: 1px solid var(--border);
+                 border-radius: 6px; padding: .8rem 1rem; }
+    .info-card .label { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em;
+                        color: var(--muted); margin-bottom: .3rem; }
+    .info-card .value { font-size: 1.1rem; font-weight: 600; color: var(--accent);
+                        font-family: var(--font-mono); }
+
+    /* Code blocks */
+    pre { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+          padding: 1rem 1.2rem; overflow-x: auto; margin: 1rem 0; font-size: .85rem;
+          font-family: var(--font-mono); line-height: 1.5; }
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 3px;
+           padding: .15em .4em; font-size: .85em; font-family: var(--font-mono); }
+    pre code { background: none; border: none; padding: 0; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .9rem; }
+    th { background: var(--surface); color: var(--muted); font-weight: 600; text-align: left;
+         padding: .6rem .8rem; border: 1px solid var(--border); font-size: .8rem;
+         text-transform: uppercase; letter-spacing: .04em; }
+    td { padding: .6rem .8rem; border: 1px solid var(--border); vertical-align: top; }
+    tr:nth-child(even) td { background: rgba(255,255,255,.02); }
+
+    /* Chart containers */
+    .chart-wrap { background: var(--surface); border: 1px solid var(--border);
+                  border-radius: 8px; padding: 1.2rem; margin: 1.2rem 0; }
+    .chart-wrap h4 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+                     letter-spacing: .05em; margin-bottom: .8rem; }
+    .chart-wrap canvas { max-height: 320px; }
+
+    /* Mermaid diagrams */
+    .diagram-wrap { background: var(--surface); border: 1px solid var(--border);
+                    border-radius: 8px; padding: 1.5rem; margin: 1.2rem 0;
+                    overflow-x: auto; text-align: center; }
+    .diagram-wrap h4 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+                       letter-spacing: .05em; margin-bottom: 1rem; text-align: left; }
+
+    /* Callout boxes */
+    .callout { border-radius: 6px; padding: .8rem 1rem; margin: 1rem 0;
+               border-left: 4px solid; }
+    .callout.note { background: rgba(88,166,255,.07); border-color: var(--accent); }
+    .callout.tip  { background: rgba(63,185,80,.07);  border-color: var(--green); }
+    .callout.warn { background: rgba(210,153,34,.07); border-color: var(--yellow); }
+    .callout.key  { background: rgba(248,81,73,.07);  border-color: var(--red); }
+    .callout strong { display: block; margin-bottom: .3rem; font-size: .85rem;
+                      text-transform: uppercase; letter-spacing: .04em; }
+
+    /* Reference list */
+    .refs ol { padding-left: 1.5rem; }
+    .refs li { margin-bottom: .5rem; font-size: .9rem; color: var(--muted); }
+    .refs a { color: var(--accent); }
+
+    /* TOC */
+    .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+           padding: 1rem 1.2rem; margin: 0 0 2rem; font-size: .9rem; }
+    .toc h3 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+              letter-spacing: .1em; margin-bottom: .6rem; }
+    .toc ol { padding-left: 1.3rem; }
+    .toc li { margin-bottom: .25rem; }
+    .toc a { color: var(--muted); text-decoration: none; }
+    .toc a:hover { color: var(--accent); }
+
+    /* Footer */
+    .report-footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border);
+                     color: var(--muted); font-size: .8rem; display: flex; justify-content: space-between; }
+  </style>
+</head>
+<body>
+<div class="page-wrap">
+
+  <a href="../index.html" class="back-link">← Back to CJ-Note</a>
+
+  <header class="report-header">
+    <h1>vLLM 推测解码（Speculative Decoding）深度解析</h1>
+    <div class="meta">
+      <span>TYPE: REPO ANALYSIS</span>
+      <span>DATE: 2026-04-10</span>
+      <span>TOPIC: Speculative Decoding / vLLM v1</span>
+    </div>
+  </header>
+
+  <!-- TL;DR -->
+  <div class="tldr">
+    <h3>TL;DR</h3>
+    <ul>
+      <li>推测解码通过"轻量 Draft 猜多步 + Target 模型一次并行验证"打破 decode 的内存带宽瓶颈，在 batch=1 场景下最高可达 4× 加速。</li>
+      <li>vLLM v1 内置四种 Proposer：NgramProposer（零参数，适合重复文本）、EAGLE/EAGLE-2（利用 Target 隐藏状态，精度最高）、DraftModelProposer（独立小模型）、MedusaProposer（并行多头）。</li>
+      <li>RejectionSampler 在 GPU 上批量执行拒绝采样，数学上保证与 Target 模型输出分布完全一致，无精度损失。</li>
+      <li>EAGLE-2 引入动态树形 draft（而非链式），在低置信度时探索多条路径，进一步提升平均接受 token 数。</li>
+      <li>推测解码仅对 small batch（内存带宽瓶颈）有效；large batch 场景下收益为零甚至负向，需按场景选型。</li>
+    </ul>
+  </div>
+
+  <!-- Table of Contents -->
+  <nav class="toc">
+    <h3>Contents</h3>
+    <ol>
+      <li><a href="#overview">推测解码概述</a></li>
+      <li><a href="#principle">核心原理：提议 + 拒绝采样</a></li>
+      <li><a href="#proposers">Proposer 提议方法总览</a></li>
+      <li><a href="#eagle">EAGLE 推测解码</a></li>
+      <li><a href="#ngram">N-gram Proposer</a></li>
+      <li><a href="#draft-model">Draft Model Proposer</a></li>
+      <li><a href="#medusa">Medusa Proposer</a></li>
+      <li><a href="#rejection">RejectionSampler 拒绝采样器</a></li>
+      <li><a href="#scheduling">调度集成</a></li>
+      <li><a href="#performance">性能分析</a></li>
+    </ol>
+  </nav>
+
+  <!-- ── 1. Overview ──────────────────────────── -->
+  <section id="overview">
+    <h2>1. 推测解码概述</h2>
+    <p>
+      LLM Decode 阶段受内存带宽瓶颈制约——每步仅生成 1 个 token，却需要将所有模型权重从 HBM 加载到计算单元。
+      推测解码通过"猜测多个 token，一次性并行验证"绕开这一瓶颈：
+    </p>
+
+    <div class="callout note">
+      <strong>核心直觉</strong>
+      批量验证 K 个 draft token 的代价与验证 1 个 token 近似（权重加载量相同），
+      但如果有 α 个被接受，等效于完成了 α 步 decode，吞吐量提升 α 倍。
+    </div>
+
+    <div class="diagram-wrap">
+      <h4>传统 Decode vs 推测解码流程对比</h4>
+      <div class="mermaid">
+flowchart TD
+    subgraph trad["传统 Decode（每步 1 token）"]
+      direction LR
+      T1["Step 1\n读权重→token_1\n15ms"] --> T2["Step 2\n读权重→token_2\n15ms"] --> T3["Step 3\n读权重→token_3\n15ms"]
+    end
+
+    subgraph spec["推测解码（batch 验证）"]
+      direction LR
+      D["Draft\nN-gram/EAGLE 猜 5 个\n1ms"] --> V["Verify\nTarget 并行验证 5 位置\n15ms"] --> R["RejectionSampler\n接受前 4 个\n拒绝 token_5"]
+    end
+
+    trad -. "45ms / 3 tokens" .-> result1(["普通速度"])
+    spec -. "16ms / 4 tokens → 2.8×" .-> result2(["加速!"])
+
+    style trad fill:#161b22,stroke:#30363d,color:#e6edf3
+    style spec fill:#161b22,stroke:#58a6ff,color:#e6edf3
+    style result2 fill:#1f6feb,stroke:#58a6ff,color:#e6edf3
+      </div>
+    </div>
+
+    <p><strong>推测解码收益最大的条件：</strong></p>
+    <ul>
+      <li>Draft 命中率高（代码生成、文档、RAG 引用等重复性强的文本）</li>
+      <li>Target 模型处于内存带宽瓶颈（即 batch_size 小）</li>
+    </ul>
+  </section>
+
+  <!-- ── 2. Principle ──────────────────────────── -->
+  <section id="principle">
+    <h2>2. 核心原理：提议 + 拒绝采样</h2>
+
+    <h3>2.1 算法框架</h3>
+    <p>每个推测解码步骤分为三个阶段：</p>
+
+    <div class="diagram-wrap">
+      <h4>推测解码三阶段序列图</h4>
+      <div class="mermaid">
+sequenceDiagram
+    participant P as Proposer (Draft)
+    participant T as Target Model
+    participant R as RejectionSampler
+
+    Note over P: 阶段 1 — Draft
+    P->>P: 生成 K 个候选 token<br/>（远低于 Target 一步的代价）
+    P->>T: draft_tokens[1..K] + draft_probs
+
+    Note over T: 阶段 2 — Verify
+    T->>T: context + K draft tokens 送入<br/>并行计算 K+1 个位置的 logits
+    T->>R: target_logits[1..K+1]
+
+    Note over R: 阶段 3 — Rejection Sampling
+    R->>R: for i=1..K:<br/>  r ~ Uniform(0,1)<br/>  if r ≤ p_target[i] / p_draft[i]: accept<br/>  else: 从修正分布重采样, break
+    R->>R: 若 K 全接受 → 额外从 K+1 位置采样
+    R-->>P: accepted_tokens (≥1 个)
+      </div>
+    </div>
+
+    <h3>2.2 拒绝采样数学保证</h3>
+    <p>
+      拒绝采样在数学上保证最终输出分布与 Target 模型完全一致，无精度损失。
+      核心公式：
+    </p>
+    <pre><code>接受率 = min(1, p_target(x) / p_draft(x))
+
+若 draft 分布 ≈ target 分布  →  接受率高  →  加速比高
+若 draft 分布与 target 差异大  →  接受率低  →  无加速（但输出仍正确）
+
+修正分布（拒绝时重采样）:
+  p_corrected(x) ∝ max(0, p_target(x) − p_draft(x))
+  归一化后从该分布采样 1 个 token</code></pre>
+
+    <div class="callout tip">
+      <strong>关键保证</strong>
+      无论 Draft 质量如何，最终输出分布均与单独运行 Target 模型等价。
+      差的 Draft 只影响加速比，不影响输出质量。
+    </div>
+  </section>
+
+  <!-- ── 3. Proposers Overview ──────────────────── -->
+  <section id="proposers">
+    <h2>3. Proposer 提议方法总览</h2>
+    <p>文件路径：<code>vllm/v1/spec_decode/</code></p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Proposer</th>
+          <th>原理</th>
+          <th>额外参数量</th>
+          <th>适用场景</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>NgramProposerGPU</code></td>
+          <td>在已有文本中查找 N-gram 匹配</td>
+          <td>零</td>
+          <td>代码补全、RAG 引用、重复文本</td>
+        </tr>
+        <tr>
+          <td><code>SuffixDecodingProposer</code></td>
+          <td>后缀树高效字符串匹配</td>
+          <td>索引结构</td>
+          <td>长 prompt 重复引用</td>
+        </tr>
+        <tr>
+          <td><code>EagleProposer</code></td>
+          <td>利用 Target 隐藏状态 + 轻量 MLP+Attn 层预测</td>
+          <td>~1/N Target 大小</td>
+          <td>通用对话、代码、指令跟随</td>
+        </tr>
+        <tr>
+          <td><code>DraftModelProposer</code></td>
+          <td>独立小型语言模型自回归生成</td>
+          <td>完整小模型</td>
+          <td>同系列模型（1B draft + 8B target）</td>
+        </tr>
+        <tr>
+          <td><code>MedusaProposer</code></td>
+          <td>Target 模型附加多个并行预测头</td>
+          <td>K 个预测头</td>
+          <td>特定微调模型</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ── 4. EAGLE ──────────────────────────────── -->
+  <section id="eagle">
+    <h2>4. EAGLE 推测解码</h2>
+    <p>文件：<code>vllm/v1/spec_decode/eagle.py</code></p>
+
+    <h3>4.1 EAGLE 原理</h3>
+    <p>
+      EAGLE（Extrapolation Algorithm for Greater Language-model Efficiency）利用 Target 模型
+      在 step N 产生的 <strong>hidden_states</strong> 作为 Draft 模型的输入，而非从头运行独立小模型：
+    </p>
+
+    <div class="diagram-wrap">
+      <h4>EAGLE 隐藏状态复用机制</h4>
+      <div class="mermaid">
+flowchart LR
+    subgraph target["Target Model (Step N)"]
+      TF["Forward Pass"] --> HS["hidden_states_N"] & LG["logits_N"]
+    end
+    LG --> ST["sampled_token_N"]
+    HS --> |"缓存"| EH
+
+    subgraph eagle["EAGLE Head (Step N+1 Draft)"]
+      EH["EagleMlpFc\nLinear(2×hidden → hidden)"] --> |"concat(hidden_N, embed(token_N))"| EL["EagleLlamaLayer\n单层 Transformer"]
+      EL --> LMH["LM Head (共享)"] --> DT["draft_token_N+1"]
+      EL --> NH["predicted_hidden_N+1"]
+    end
+    NH --> |"继续自回归"| EH2["下一步 EAGLE Head"]
+    EH2 --> |"× K 步"| DKT["draft_tokens[1..K]"]
+
+    style target fill:#161b22,stroke:#30363d,color:#e6edf3
+    style eagle fill:#1a2332,stroke:#1f6feb,color:#e6edf3
+      </div>
+    </div>
+
+    <h3>4.2 EAGLE Head 结构</h3>
+    <pre><code>EAGLE Head 结构:
+  EagleMlpFc: Linear(2×hidden_size → hidden_size)
+              输入 = concat(hidden_states_N, embed(token_N))
+  EagleLlamaLayer: 单层 Transformer（Attention + MLP）
+  LM Head: 共享 Target 模型的 lm_head（无额外参数）
+
+参数量估算（以 Llama-3-8B 为例，32 层）:
+  EAGLE Head ≈ Target 的 1/32 大小（单层 Transformer + MLP）
+  → 极低推理代价，draft_overhead_ratio ≈ 5%</code></pre>
+
+    <h3>4.3 EAGLE 推理流程</h3>
+    <pre><code>EagleProposer.propose(seq_group_metadata_list, blocks_to_swap, ...)
+
+1. 获取 Target 模型的隐藏状态缓存
+   hidden_states = model_runner.get_last_hidden_states(req_ids)
+
+2. EAGLE Head 自回归推测 K 步
+   draft_tokens = []
+   h = hidden_states
+   for step in range(num_spec_tokens):
+       # 拼接上一步的 hidden 和 token embedding
+       x = concat(h, embed(prev_token))
+       # EAGLE 层前向
+       h_new = eagle_layer(x, positions, kv_cache)
+       # 从 LM Head 采样 draft token
+       draft_logits = lm_head(h_new)
+       draft_token = sample(draft_logits)
+       draft_tokens.append(draft_token)
+       h = h_new
+
+3. 返回 draft_tokens 给 Scheduler</code></pre>
+
+    <h3>4.4 EAGLE-2 改进：动态 Draft Tree</h3>
+    <p>
+      EAGLE-2 用动态树形推测替代链式推测，在置信度低时探索多条路径，
+      置信度高时聚焦最优路径，进一步提升平均接受 token 数。
+    </p>
+
+    <div class="diagram-wrap">
+      <h4>链式（EAGLE-1）vs 树形（EAGLE-2）</h4>
+      <div class="mermaid">
+flowchart LR
+    subgraph chain["EAGLE-1 (链式)"]
+      direction LR
+      C0[ctx] --> C1[d1] --> C2[d2] --> C3[d3] --> C4[d4] --> C5[d5]
+    end
+
+    subgraph tree["EAGLE-2 (树形)"]
+      direction LR
+      T0[ctx] --> T1a[d1_a] & T1b[d1_b]
+      T1a --> T2a[d2_a] & T2b[d2_b]
+      T2a --> T3a[d3_a]
+      T1b --> T2c[d2_c]
+    end
+
+    style chain fill:#161b22,stroke:#30363d,color:#e6edf3
+    style tree fill:#1a2332,stroke:#3fb950,color:#e6edf3
+      </div>
+    </div>
+    <p>
+      树形策略优势：高置信度 token 直接验证一条链，低置信度时探索多分支，
+      整体接受率更高，平均每步接受 token 数更多。
+    </p>
+  </section>
+
+  <!-- ── 5. N-gram ──────────────────────────────── -->
+  <section id="ngram">
+    <h2>5. N-gram Proposer</h2>
+    <p>文件：<code>vllm/v1/spec_decode/ngram.py</code></p>
+
+    <h3>5.1 原理</h3>
+    <p>在已有的 prompt+output 文本中查找 N-gram 匹配来预测后续 token，无需任何模型参数：</p>
+    <pre><code>示例：
+  已有文本: "The quick brown fox jumps over the lazy"
+  最后 2 个 token: ["the", "lazy"]
+
+  在文本中查找 "the lazy" 的位置:
+    "... jumps over THE LAZY dog ..."
+    ↑ 找到匹配！
+
+  预测接下来的 tokens:
+    "the lazy" → "dog" → "." → ...
+
+  Draft: ["dog", ".", "The"]</code></pre>
+
+    <h3>5.2 优势与限制</h3>
+    <table>
+      <thead>
+        <tr><th>维度</th><th>说明</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>优势</td>
+          <td>
+            零额外模型/参数；适用于重复性强的文本（代码补全、RAG 引用、翻译）；
+            计算开销极低（GPU 上文本内查找）
+          </td>
+        </tr>
+        <tr>
+          <td>限制</td>
+          <td>
+            需要文本有足够重复性；无法预测从未出现过的 token 序列；
+            对创意写作、开放域问答等场景基本无效
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout tip">
+      <strong>最佳场景</strong>
+      RAG 引用原文、代码补全（重复的函数调用/关键字）、文档翻译——这些场景 N-gram 接受率极高，
+      且无任何模型加载开销，是成本最低的推测解码方案。
+    </div>
+  </section>
+
+  <!-- ── 6. Draft Model ─────────────────────────── -->
+  <section id="draft-model">
+    <h2>6. Draft Model Proposer</h2>
+    <p>用独立的小型语言模型作为 Draft，适合同系列模型配对（如 1B 替代 8B）：</p>
+    <pre><code>配置示例:
+LLM(
+    model="meta-llama/Llama-3.1-8B-Instruct",   # Target
+    speculative_config={
+        "model": "meta-llama/Llama-3.2-1B-Instruct",  # Draft (1B 替 8B)
+        "num_speculative_tokens": 5,
+        "draft_tensor_parallel_size": 1,
+    }
+)
+
+执行流程:
+  1. Draft 模型自回归生成 K tokens（相对 Target 模型快约 5×）
+  2. Target 模型并行验证所有 K tokens
+
+最优条件:
+  Draft 与 Target 同系列（分布相近，接受率高）
+  Draft 小模型速度 ≥ Target 的 1/5</code></pre>
+  </section>
+
+  <!-- ── 7. Medusa ──────────────────────────────── -->
+  <section id="medusa">
+    <h2>7. Medusa Proposer</h2>
+    <p>为 Target 模型添加多个并行预测头，每个头预测未来不同位置的 token：</p>
+    <pre><code>Medusa 结构:
+  Head 1: 预测 target+1 的 token
+  Head 2: 预测 target+2 的 token
+  Head K: 预测 target+K 的 token
+
+所有 Head 并行计算，代价约等于 1 次 Target forward
+
+配置示例:
+LLM(
+    model="FasterDecoding/medusa-vicuna-7b-v1.3",  # 含 Medusa 头的模型
+    speculative_config={
+        "method": "medusa",
+        "num_speculative_tokens": 3,
+    }
+)</code></pre>
+    <div class="callout note">
+      <strong>注意</strong>
+      Medusa 需要使用专门微调过（含 Medusa 头）的模型权重，不能直接应用于任意标准模型。
+    </div>
+  </section>
+
+  <!-- ── 8. RejectionSampler ───────────────────── -->
+  <section id="rejection">
+    <h2>8. RejectionSampler（拒绝采样器）</h2>
+    <p>文件：<code>vllm/v1/spec_decode/rejection_sampler.py</code></p>
+
+    <h3>8.1 算法实现</h3>
+    <pre><code class="language-python">class RejectionSampler:
+
+    def forward(
+        self,
+        spec_decode_metadata: SpecDecodeMetadata,
+        draft_probs: torch.Tensor | None,   # [num_reqs, K, vocab_size]
+        target_logits: torch.Tensor,         # [num_reqs, K+1, vocab_size]
+        sampling_metadata: SamplingMetadata,
+    ) -> SamplerOutput:
+        """执行 speculative decoding 的拒绝采样。"""
+        # 1. 计算 Target probabilities
+        target_probs = softmax(target_logits / temperature, dim=-1)
+
+        # 2. 获取 Draft token IDs
+        draft_token_ids = spec_decode_metadata.draft_token_ids  # [num_reqs, K]
+
+        # 3. 批量拒绝采样（GPU 上并行）
+        accepted_tokens = []
+        for req_idx in range(num_reqs):
+            accepted = []
+            for k in range(K):
+                t = draft_token_ids[req_idx, k]
+                p_target = target_probs[req_idx, k, t]
+                p_draft = draft_probs[req_idx, k, t] if draft_probs else 1.0
+
+                r = torch.rand(1)
+                if r <= p_target / p_draft:
+                    accepted.append(t)
+                else:
+                    # 从修正分布采样一个 token
+                    corrected_prob = max(target_probs[req_idx, k] - min(target_probs, p_draft), 0)
+                    corrected_prob /= corrected_prob.sum()
+                    t_corrected = torch.multinomial(corrected_prob, 1)
+                    accepted.append(t_corrected)
+                    break  # 停止处理后续 token
+
+            # 如果所有 K 个都接受，额外从最后位置采样
+            if len(accepted) == K:
+                bonus_token = torch.multinomial(target_probs[req_idx, K], 1)
+                accepted.append(bonus_token)
+
+            accepted_tokens.append(accepted)
+
+        return SamplerOutput(sampled_token_ids=accepted_tokens)</code></pre>
+
+    <h3>8.2 典型接受率</h3>
+    <p>不同任务下，5 个 draft tokens 的典型接受情况：</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>任务类型</th>
+          <th>平均接受 tokens/step</th>
+          <th>接受率</th>
+          <th>特点</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>代码生成（Python）</td>
+          <td>3.5 – 4.5</td>
+          <td>70 – 90%</td>
+          <td>函数调用、缩进、关键字重复性高</td>
+        </tr>
+        <tr>
+          <td>文档翻译</td>
+          <td>3.0 – 4.0</td>
+          <td>60 – 80%</td>
+          <td>有规律的语言模式</td>
+        </tr>
+        <tr>
+          <td>问答（事实性）</td>
+          <td>2.5 – 3.5</td>
+          <td>50 – 70%</td>
+          <td>结构化回答有一定规律</td>
+        </tr>
+        <tr>
+          <td>创意写作</td>
+          <td>2.0 – 3.0</td>
+          <td>40 – 60%</td>
+          <td>多样性高，draft 命中率低</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- Chart: 接受率 bar chart -->
+    <div class="chart-wrap">
+      <h4>各任务典型平均接受 tokens/step（5 个 draft tokens，EAGLE）</h4>
+      <canvas id="acceptanceChart"></canvas>
+    </div>
+  </section>
+
+  <!-- ── 9. Scheduling Integration ─────────────── -->
+  <section id="scheduling">
+    <h2>9. 推测解码的调度集成</h2>
+
+    <h3>9.1 Scheduler 中的 Lookahead 块分配</h3>
+    <p>调度器需为 draft token 预分配 KV 块，被拒绝的 token 对应块在下一步重用：</p>
+    <pre><code class="language-python"># 调度器需要为推测 token 预分配 KV 块
+num_spec_tokens = 5  # 每步最多推测 5 个 token
+
+# 在 allocate_slots 时：
+num_total_tokens = num_current_tokens + num_spec_tokens
+num_blocks_needed = ceil(num_total_tokens / block_size)
+
+# 即使推测 token 可能被拒绝，也预先分配空间
+# 被拒绝的 token 对应的 KV 块在下一步会被重用（或丢弃）</code></pre>
+
+    <h3>9.2 SpecDecodeMetadata 传递</h3>
+    <pre><code class="language-python">class SpecDecodeMetadata:
+    """传递给 ModelRunner 的推测解码元数据"""
+    draft_token_ids: list[list[int]]        # [req_idx][draft_idx]
+    num_draft_tokens: list[int]             # 每个请求的 draft 数
+    cu_num_draft_tokens: torch.Tensor       # 前缀和（GPU 上）
+
+    # 树形推测（EAGLE-2）
+    draft_tree: TreeStructure | None</code></pre>
+
+    <div class="callout warn">
+      <strong>调度注意事项</strong>
+      Lookahead 块预分配会增加内存占用。若 KV cache 紧张，建议减小 <code>num_speculative_tokens</code>
+      或在高 batch size 时动态关闭推测解码。
+    </div>
+  </section>
+
+  <!-- ── 10. Performance ─────────────────────────── -->
+  <section id="performance">
+    <h2>10. 性能分析</h2>
+
+    <h3>10.1 推测解码收益模型</h3>
+    <pre><code>加速比 ≈ (mean_accepted_tokens + 1) / (1 + draft_overhead_ratio)
+
+其中:
+  mean_accepted_tokens : 平均每步接受的 draft token 数
+  draft_overhead_ratio : Draft 阶段耗时 / Target 验证耗时
+
+示例（EAGLE + Llama-3-8B，batch=1）:
+  mean_accepted     = 3.2（代码生成）
+  draft_overhead    ≈ 0.05（EAGLE Head 约 Target 的 5%）
+  加速比            ≈ (3.2 + 1) / (1 + 0.05) ≈ 4.0×</code></pre>
+
+    <!-- Chart: 加速比 bar chart -->
+    <div class="chart-wrap">
+      <h4>各场景预期加速比（EAGLE，batch=1，Llama-3-8B）</h4>
+      <canvas id="speedupChart"></canvas>
+    </div>
+
+    <h3>10.2 适用场景推荐</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>场景</th>
+          <th>推荐方法</th>
+          <th>预期加速</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>代码补全（Python/JS）</td>
+          <td>N-gram 或 EAGLE</td>
+          <td>2 – 4×</td>
+        </tr>
+        <tr>
+          <td>RAG 文档引用</td>
+          <td>N-gram</td>
+          <td>2 – 3×</td>
+        </tr>
+        <tr>
+          <td>聊天对话</td>
+          <td>EAGLE</td>
+          <td>1.5 – 2.5×</td>
+        </tr>
+        <tr>
+          <td>创意写作</td>
+          <td>EAGLE</td>
+          <td>1.2 – 1.8×</td>
+        </tr>
+        <tr>
+          <td>批量推理（large batch）</td>
+          <td>不推荐</td>
+          <td>可能无效或负向</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>10.3 配置建议</h3>
+    <pre><code class="language-python"># 代码补全场景（N-gram）
+LLM(
+    model="codellama/CodeLlama-7b-hf",
+    speculative_config={
+        "method": "ngram",
+        "num_speculative_tokens": 5,
+        "ngram_prompt_lookup_max": 4,
+    }
+)
+
+# 聊天场景（EAGLE）
+LLM(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    speculative_config={
+        "method": "eagle",
+        "model": "yuhuili/EAGLE-LLaMA3.1-Instruct-8B",
+        "num_speculative_tokens": 5,
+    }
+)</code></pre>
+
+    <div class="callout key">
+      <strong>关键限制</strong>
+      推测解码仅适用于 <strong>内存带宽瓶颈</strong>（small batch）场景。
+      当 batch size 增大，Target 模型进入计算瓶颈，draft 验证代价无法被摊薄，
+      加速比趋近于 1 甚至小于 1。生产部署前务必针对实际 batch size 进行 benchmark。
+    </div>
+  </section>
+
+  <!-- ── References ─────────────────────────────── -->
+  <section id="refs" class="refs">
+    <h2>References</h2>
+    <ol>
+      <li><a href="https://github.com/vllm-project/vllm/tree/main/vllm/v1/spec_decode" target="_blank">vLLM v1 spec_decode 模块源码</a></li>
+      <li><a href="https://arxiv.org/abs/2211.17192" target="_blank">Speculative Decoding 原论文 — Leviathan et al., 2022</a></li>
+      <li><a href="https://arxiv.org/abs/2401.15077" target="_blank">EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty — Li et al., 2024</a></li>
+      <li><a href="https://arxiv.org/abs/2406.16858" target="_blank">EAGLE-2: Faster Inference of Language Models with Dynamic Draft Trees — Li et al., 2024</a></li>
+      <li><a href="https://arxiv.org/abs/2401.10774" target="_blank">Medusa: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads — Cai et al., 2024</a></li>
+      <li><a href="https://docs.vllm.ai/en/latest/features/spec_decode.html" target="_blank">vLLM Speculative Decoding 官方文档</a></li>
+    </ol>
+  </section>
+
+  <footer class="report-footer">
+    <span>CJ-Note · LLM Inference Research</span>
+    <span>Generated 2026-04-10</span>
+  </footer>
+</div>
+
+<script>
+  // Initialize Mermaid with dark theme
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      background: '#161b22',
+      primaryColor: '#1f6feb',
+      primaryTextColor: '#e6edf3',
+      lineColor: '#8b949e',
+      secondaryColor: '#21262d',
+      tertiaryColor: '#161b22'
+    }
+  });
+
+  // Chart 1: Acceptance rate per task (avg accepted tokens/step out of 5)
+  const ctxAcceptance = document.getElementById('acceptanceChart');
+  if (ctxAcceptance) {
+    new Chart(ctxAcceptance, {
+      type: 'bar',
+      data: {
+        labels: ['代码生成 (Python)', '文档翻译', '问答 (事实性)', '创意写作'],
+        datasets: [
+          {
+            label: '平均接受 tokens/step（下限）',
+            data: [3.5, 3.0, 2.5, 2.0],
+            backgroundColor: 'rgba(88,166,255,0.4)',
+            borderColor: '#58a6ff',
+            borderWidth: 1,
+            borderRadius: 4
+          },
+          {
+            label: '平均接受 tokens/step（上限）',
+            data: [4.5, 4.0, 3.5, 3.0],
+            backgroundColor: 'rgba(63,185,80,0.4)',
+            borderColor: '#3fb950',
+            borderWidth: 1,
+            borderRadius: 4
+          }
+        ]
+      },
+      options: {
+        plugins: {
+          legend: { labels: { color: '#8b949e' } },
+          tooltip: {
+            callbacks: {
+              label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y} tokens`
+            }
+          }
+        },
+        scales: {
+          x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+          y: {
+            ticks: { color: '#8b949e' },
+            grid: { color: '#21262d' },
+            min: 0, max: 5,
+            title: { display: true, text: 'tokens/step', color: '#8b949e' }
+          }
+        }
+      }
+    });
+  }
+
+  // Chart 2: Speedup per scenario
+  const ctxSpeedup = document.getElementById('speedupChart');
+  if (ctxSpeedup) {
+    new Chart(ctxSpeedup, {
+      type: 'bar',
+      data: {
+        labels: ['代码补全\n(N-gram/EAGLE)', 'RAG 引用\n(N-gram)', '聊天对话\n(EAGLE)', '创意写作\n(EAGLE)', '大 Batch\n(不推荐)'],
+        datasets: [{
+          label: '预期加速比 (×)',
+          data: [3.0, 2.5, 2.0, 1.5, 1.0],
+          backgroundColor: [
+            'rgba(63,185,80,0.6)',
+            'rgba(63,185,80,0.5)',
+            'rgba(88,166,255,0.5)',
+            'rgba(88,166,255,0.4)',
+            'rgba(248,81,73,0.4)'
+          ],
+          borderColor: ['#3fb950', '#3fb950', '#58a6ff', '#58a6ff', '#f85149'],
+          borderWidth: 1,
+          borderRadius: 4
+        }]
+      },
+      options: {
+        plugins: {
+          legend: { labels: { color: '#8b949e' } },
+          tooltip: {
+            callbacks: {
+              label: ctx => ` 加速比: ${ctx.parsed.y}×`
+            }
+          }
+        },
+        scales: {
+          x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+          y: {
+            ticks: { color: '#8b949e', callback: v => v + '×' },
+            grid: { color: '#21262d' },
+            min: 0, max: 4.5,
+            title: { display: true, text: '加速比 (×)', color: '#8b949e' }
+          }
+        }
+      }
+    });
+  }
+</script>
+</body>
+</html>

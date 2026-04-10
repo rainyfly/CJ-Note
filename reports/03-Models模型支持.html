@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang Models 模型支持">
+  <meta name="report-type"  content="repo">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang Models 模型支持">
+  <meta name="report-type"  content="sglang">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+  <title>SGLang Models 模型支持</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root { --bg:#0d1117; --bg2:#161b22; --bg3:#1c2128; --border:#30363d; --text:#e6edf3; --text2:#8b949e; --text3:#656d76; --cyan:#39d0d8; --blue:#58a6ff; --green:#3fb950; --yellow:#e3b341; --orange:#f78166; --purple:#bc8cff; --red:#f85149; --font-mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace; }
+    html { scroll-behavior: smooth; }
+    body { font-family: -apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif; background:var(--bg); color:var(--text); line-height:1.75; font-size:16px; }
+    .page-wrap { display:grid; grid-template-columns:260px 1fr; min-height:100vh; }
+    @media(max-width:900px){ .page-wrap{grid-template-columns:1fr;} .sidebar{display:none;} }
+    .sidebar { position:sticky; top:0; height:100vh; overflow-y:auto; background:var(--bg2); border-right:1px solid var(--border); padding:24px 16px; }
+    .sidebar-brand { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:var(--text3); margin-bottom:16px; }
+    .toc a { display:block; padding:6px 8px; font-size:13px; color:var(--text2); text-decoration:none; border-radius:6px; margin-bottom:2px; }
+    .toc a:hover { background:var(--bg3); color:var(--cyan); }
+    .toc .sub { padding-left:16px; font-size:12px; }
+    main { max-width:960px; margin:0 auto; padding:48px 32px; }
+    h1 { font-size:2.2rem; margin-bottom:8px; background:linear-gradient(135deg,var(--cyan),var(--blue)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+    .subtitle { color:var(--text2); font-size:1rem; margin-bottom:40px; }
+    h2 { font-size:1.5rem; color:var(--cyan); margin:48px 0 16px; padding-bottom:8px; border-bottom:1px solid var(--border); }
+    h3 { font-size:1.15rem; color:var(--blue); margin:32px 0 12px; }
+    h4 { font-size:1rem; color:var(--purple); margin:24px 0 8px; }
+    p,li { color:var(--text); margin-bottom:12px; }
+    ul,ol { padding-left:24px; }
+    a { color:var(--blue); text-decoration:none; }
+    .card { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:24px; margin:16px 0; }
+    .card-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; margin:16px 0; }
+    .tag { display:inline-block; padding:2px 10px; border-radius:12px; font-size:12px; font-weight:600; margin:2px 4px 2px 0; }
+    .tag-cyan { background:rgba(57,208,216,0.15); color:var(--cyan); }
+    .tag-blue { background:rgba(88,166,255,0.15); color:var(--blue); }
+    .tag-green { background:rgba(63,185,80,0.15); color:var(--green); }
+    .tag-yellow { background:rgba(227,179,65,0.15); color:var(--yellow); }
+    .tag-orange { background:rgba(247,129,102,0.15); color:var(--orange); }
+    .tag-purple { background:rgba(188,140,255,0.15); color:var(--purple); }
+    .tag-red { background:rgba(248,81,73,0.15); color:var(--red); }
+    table { width:100%; border-collapse:collapse; margin:16px 0; font-size:14px; }
+    th,td { padding:10px 14px; text-align:left; border:1px solid var(--border); }
+    th { background:var(--bg3); color:var(--cyan); font-weight:600; }
+    td { background:var(--bg2); }
+    code { font-family:var(--font-mono); background:var(--bg3); padding:2px 6px; border-radius:4px; font-size:0.9em; color:var(--orange); }
+    pre { background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:16px; overflow-x:auto; margin:16px 0; font-size:13px; line-height:1.6; }
+    pre code { background:none; padding:0; color:var(--text); }
+    .mermaid { background:var(--bg2); border-radius:12px; padding:20px; margin:16px 0; display:flex; justify-content:center; }
+    .highlight { background:rgba(57,208,216,0.08); border-left:3px solid var(--cyan); padding:16px 20px; border-radius:0 8px 8px 0; margin:16px 0; }
+  </style>
+</head>
+<body>
+<div class="page-wrap">
+  <nav class="sidebar">
+    <div class="sidebar-brand">SGLang Research</div>
+    <div class="toc">
+      <a href="00-SGLang-整体设计综述.html">← 返回综述</a>
+      <a href="#overview">模型支持概述</a>
+      <a href="#registry">模型注册机制</a>
+      <a href="#dense">Dense 模型</a>
+      <a href="#moe">MoE 模型</a>
+      <a href="#vlm">视觉-语言模型</a>
+      <a href="#embed">Embedding & 分类</a>
+      <a href="#deepseek">DeepSeek 特化</a>
+      <a href="#transformers">Transformers 后端</a>
+    </div>
+  </nav>
+  <main>
+    <h1>03 - Models 模型支持</h1>
+    <p class="subtitle">SGLang 模型架构注册、实现模式与支持范围分析</p>
+
+    <h2 id="overview">1. 模型支持概述</h2>
+    <p>SGLang 在 <code>srt/models/</code> 目录下实现了 100+ 种模型架构的推理适配。每个模型文件包含一个 <code>EntryClass</code> 变量，指向该文件中的模型类。模型通过 <code>ModelRegistry</code> 动态发现和注册。</p>
+
+    <h2 id="registry">2. 模型注册机制</h2>
+
+    <div class="mermaid">
+flowchart TD
+    A["ModelRegistry 初始化"] --> B["importlib.import_module<br/>扫描 sglang.srt.models 包"]
+    B --> C["遍历所有 .py 模块"]
+    C --> D{"module.EntryClass 存在?"}
+    D -->|Yes| E["注册 class_name → class"]
+    D -->|No| F["跳过"]
+    E --> G["models dict<br/>{arch_name: model_cls}"]
+
+    H["用户请求推理"] --> I["HuggingFace config.architectures"]
+    I --> J["ModelRegistry.resolve_model_cls()"]
+    J --> K{"arch 在注册表中?"}
+    K -->|Yes| L["返回对应 model_cls"]
+    K -->|No| M["Fallback: TransformersForCausalLM"]
+    </div>
+
+    <div class="card">
+      <h4>注册流程关键代码</h4>
+      <pre><code># registry.py
+ModelRegistry = _ModelRegistry()
+ModelRegistry.register("sglang.srt.models")  # 自动扫描注册
+
+# 每个模型文件的约定:
+# models/llama.py
+class LlamaForCausalLM(nn.Module):
+    ...
+EntryClass = LlamaForCausalLM  # 注册入口</code></pre>
+    </div>
+
+    <h3>2.1 模型实现约定</h3>
+    <p>每个模型类需要实现以下接口：</p>
+    <table>
+      <tr><th>方法</th><th>说明</th></tr>
+      <tr><td><code>__init__(config, ...)</code></td><td>模型初始化，构建层结构</td></tr>
+      <tr><td><code>forward(input_ids, positions, forward_batch, ...)</code></td><td>前向推理，返回 logits</td></tr>
+      <tr><td><code>load_weights(weights_iter)</code></td><td>加载权重，映射 HuggingFace 权重名到内部层</td></tr>
+    </table>
+
+    <h2 id="dense">3. Dense 模型</h2>
+    <table>
+      <tr><th>模型系列</th><th>文件</th><th>支持变体</th></tr>
+      <tr><td>LLaMA</td><td><code>llama.py</code></td><td>LLaMA 1/2/3/4, CodeLLaMA, Vicuna</td></tr>
+      <tr><td>Qwen</td><td><code>qwen.py, qwen2.py, qwen3.py</code></td><td>Qwen 1/2/3, Qwen2.5</td></tr>
+      <tr><td>Mistral</td><td><code>mistral.py</code></td><td>Mistral 7B, Mistral Large 3</td></tr>
+      <tr><td>DeepSeek</td><td><code>deepseek.py, deepseek_v2.py</code></td><td>DeepSeek 1/2/3, DeepSeek-V2/V3</td></tr>
+      <tr><td>GLM</td><td><code>glm4.py, chatglm.py</code></td><td>GLM-4, ChatGLM</td></tr>
+      <tr><td>Phi</td><td><code>phi.py, phi3_small.py</code></td><td>Phi-1/2/3/4</td></tr>
+      <tr><td>Gemma</td><td><code>gemma.py, gemma2.py, gemma3_causal.py</code></td><td>Gemma 1/2/3</td></tr>
+      <tr><td>InternLM</td><td><code>internlm2.py</code></td><td>InternLM2</td></tr>
+      <tr><td>GPT-2</td><td><code>gpt2.py</code></td><td>GPT-2</td></tr>
+      <tr><td>OPT</td><td><code>opt.py</code></td><td>OPT</td></tr>
+      <tr><td>其他</td><td>多个文件</td><td>Falcon, Granite, StableLM, Olmo, Exaone, XVERSE, Baichuan, Command-R, Orion, Solar, etc.</td></tr>
+    </table>
+
+    <h2 id="moe">4. MoE 模型</h2>
+    <table>
+      <tr><th>模型</th><th>文件</th><th>特点</th></tr>
+      <tr><td>Mixtral</td><td><code>mixtral.py</code></td><td>经典 top-2 MoE</td></tr>
+      <tr><td>DeepSeek-V2/V3</td><td><code>deepseek_v2.py</code></td><td>MLA + MoE，细粒度专家</td></tr>
+      <tr><td>Qwen2-MoE</td><td><code>qwen2_moe.py</code></td><td>Qwen MoE 变体</td></tr>
+      <tr><td>Qwen3-MoE</td><td><code>qwen3_moe.py</code></td><td>Qwen3 MoE</td></tr>
+      <tr><td>GLM4-MoE</td><td><code>glm4_moe.py</code></td><td>GLM 系列 MoE</td></tr>
+      <tr><td>Grok</td><td><code>grok.py</code></td><td>xAI Grok MoE</td></tr>
+      <tr><td>DBRX</td><td><code>dbrx.py</code></td><td>Databricks MoE</td></tr>
+      <tr><td>OLMoE</td><td><code>olmoe.py</code></td><td>OLMo MoE</td></tr>
+      <tr><td>其他</td><td>多个文件</td><td>AF-MoE, Bailing-MoE, GraniteMoE, PhiMoE, Hunyuan, XVERSE-MoE, etc.</td></tr>
+    </table>
+
+    <h2 id="vlm">5. 视觉-语言模型 (VLM)</h2>
+    <p>SGLang 对 VLM 的支持通过 <code>srt/multimodal/</code> 子系统和模型文件中的视觉编码器集成实现：</p>
+    <table>
+      <tr><th>模型</th><th>文件</th><th>视觉编码器</th></tr>
+      <tr><td>LLaVA</td><td><code>llava.py</code></td><td>CLIP ViT</td></tr>
+      <tr><td>InternVL</td><td><code>internvl.py</code></td><td>InternViT</td></tr>
+      <tr><td>Qwen2-VL / Qwen2.5-VL</td><td><code>qwen2_vl.py, qwen2_5_vl.py</code></td><td>Qwen Vision</td></tr>
+      <tr><td>Qwen3-VL</td><td><code>qwen3_vl.py</code></td><td>Qwen3 Vision</td></tr>
+      <tr><td>GLM-4V</td><td><code>glm4v.py</code></td><td>EVA-CLIP</td></tr>
+      <tr><td>MLLaMA</td><td><code>mllama.py, mllama4.py</code></td><td>LLaMA Vision</td></tr>
+      <tr><td>MiniCPM-V</td><td><code>minicpmv.py</code></td><td>SigLIP</td></tr>
+      <tr><td>Phi-4-MM</td><td><code>phi4mm.py</code></td><td>多模态融合</td></tr>
+      <tr><td>Pixtral</td><td><code>pixtral.py</code></td><td>Pixtral Vision</td></tr>
+      <tr><td>DeepSeek-Janus</td><td><code>deepseek_janus_pro.py</code></td><td>SigLIP</td></tr>
+      <tr><td>Kimi-VL</td><td><code>kimi_vl.py</code></td><td>MoonViT</td></tr>
+    </table>
+
+    <div class="mermaid">
+flowchart LR
+    A["图像输入"] --> B["Multimodal Processor"]
+    B --> C["视觉编码器<br/>CLIP/SigLIP/EVA"]
+    C --> D["视觉 Token 嵌入"]
+    D --> E["与文本 Token<br/>拼接/交织"]
+    E --> F["LLM Backbone<br/>前向推理"]
+    </div>
+
+    <h2 id="embed">6. Embedding & 分类模型</h2>
+    <table>
+      <tr><th>模型</th><th>类型</th><th>文件</th></tr>
+      <tr><td>LLaMA Embedding</td><td>文本嵌入</td><td><code>llama_embedding.py</code></td></tr>
+      <tr><td>BERT</td><td>双向编码器</td><td><code>bert.py</code></td></tr>
+      <tr><td>RoBERTa</td><td>双向编码器</td><td><code>roberta.py</code></td></tr>
+      <tr><td>LLaMA Classification</td><td>分类</td><td><code>llama_classification.py</code></td></tr>
+      <tr><td>Qwen2 Classification</td><td>分类</td><td><code>qwen2_classification.py</code></td></tr>
+      <tr><td>LLaMA Reward</td><td>奖励模型</td><td><code>llama_reward.py</code></td></tr>
+      <tr><td>InternLM2 Reward</td><td>奖励模型</td><td><code>internlm2_reward.py</code></td></tr>
+      <tr><td>Gemma2 Reward</td><td>奖励模型</td><td><code>gemma2_reward.py</code></td></tr>
+    </table>
+
+    <h2 id="deepseek">7. DeepSeek 系列特化支持</h2>
+    <p>DeepSeek V2/V3 模型因其独特的 MLA (Multi-head Latent Attention) + MoE 架构，SGLang 进行了大量特化优化：</p>
+
+    <div class="card">
+      <h4>DeepSeek Common 模块</h4>
+      <p>位于 <code>srt/models/deepseek_common/</code>，提供：</p>
+      <ul>
+        <li><strong>attention_backend_handler.py</strong>: MLA 注意力后端调度</li>
+        <li><strong>attention_forward_methods/</strong>: MHA 和 MLA 的前向方法实现</li>
+        <li><strong>deepseek_weight_loader.py</strong>: 专用权重加载器（处理 MLA 的 KV 压缩权重等）</li>
+      </ul>
+    </div>
+
+    <div class="mermaid">
+flowchart TD
+    subgraph DS["DeepSeek-V2/V3 架构"]
+        A["Input Tokens"] --> B["RMSNorm"]
+        B --> C["MLA Attention<br/>(Multi-head Latent Attention)"]
+        C --> D["RMSNorm"]
+        D --> E["MoE Layer<br/>(细粒度 256 专家, top-8)"]
+        E --> F["Output"]
+    end
+
+    subgraph MLA["MLA 实现"]
+        G["Q: 标准投影"] --> H["K/V: 低秩压缩"]
+        H --> I["latent_kv_dim << head_dim"]
+        I --> J["解压还原 KV"]
+        J --> K["Attention 计算"]
+    end
+    </div>
+
+    <h2 id="transformers">8. Transformers 通用后端</h2>
+    <p><code>srt/models/transformers.py</code> 提供了基于 HuggingFace Transformers 的通用后端，作为 fallback。当特定模型架构未在 SGLang 中实现时，自动回退到 Transformers 后端，虽然性能不如原生实现但保证了兼容性。</p>
+
+    <div class="highlight">
+      <strong>模型扩展方式</strong>: 通过设置环境变量 <code>SGLANG_EXTERNAL_MODEL_PACKAGE</code> 可以注册外部模型包，实现自定义模型的无侵入式集成。
+    </div>
+  </main>
+</div>
+<script>mermaid.initialize({startOnLoad:true,theme:'dark'});</script>
+</body>
+</html>

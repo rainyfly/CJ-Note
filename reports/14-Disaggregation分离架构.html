@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang Disaggregation 分离架构深度解析">
+  <meta name="report-type"  content="repo">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang Disaggregation 分离架构深度解析">
+  <meta name="report-type"  content="sglang">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+<title>SGLang Disaggregation 分离架构深度解析</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}:root{--bg:#0d1117;--bg2:#161b22;--bg3:#1c2128;--border:#30363d;--text:#e6edf3;--text2:#8b949e;--text3:#656d76;--cyan:#39d0d8;--blue:#58a6ff;--green:#3fb950;--yellow:#e3b341;--orange:#f78166;--purple:#bc8cff;--red:#f85149;--font-mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace}html{scroll-behavior:smooth}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif;background:var(--bg);color:var(--text);line-height:1.75;font-size:16px}.page-wrap{display:grid;grid-template-columns:260px 1fr;min-height:100vh}@media(max-width:900px){.page-wrap{grid-template-columns:1fr}.sidebar{display:none}}.sidebar{position:sticky;top:0;height:100vh;overflow-y:auto;background:var(--bg2);border-right:1px solid var(--border);padding:24px 16px}.sidebar-brand{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:16px}.toc a{display:block;padding:6px 8px;font-size:13px;color:var(--text2);text-decoration:none;border-radius:6px;margin-bottom:2px}.toc a:hover{background:var(--bg3);color:var(--cyan)}main{max-width:960px;margin:0 auto;padding:48px 32px}h1{font-size:2.2rem;margin-bottom:8px;background:linear-gradient(135deg,var(--cyan),var(--blue));-webkit-background-clip:text;-webkit-text-fill-color:transparent}.subtitle{color:var(--text2);font-size:1rem;margin-bottom:40px}h2{font-size:1.5rem;color:var(--cyan);margin:48px 0 16px;padding-bottom:8px;border-bottom:1px solid var(--border)}h3{font-size:1.15rem;color:var(--blue);margin:32px 0 12px}h4{font-size:1rem;color:var(--purple);margin:24px 0 8px}p,li{margin-bottom:12px}ul,ol{padding-left:24px}a{color:var(--blue);text-decoration:none}.card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px;margin:16px 0}table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px}th,td{padding:10px 14px;text-align:left;border:1px solid var(--border)}th{background:var(--bg3);color:var(--cyan)}td{background:var(--bg2)}code{font-family:var(--font-mono);background:var(--bg3);padding:2px 6px;border-radius:4px;font-size:0.9em;color:var(--orange)}pre{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:16px;overflow-x:auto;margin:16px 0;font-size:13px}pre code{background:none;padding:0;color:var(--text)}.mermaid{background:var(--bg2);border-radius:12px;padding:20px;margin:16px 0;display:flex;justify-content:center}.highlight{background:rgba(57,208,216,0.08);border-left:3px solid var(--cyan);padding:16px 20px;border-radius:0 8px 8px 0;margin:16px 0}
+</style>
+</head>
+<body>
+<div class="page-wrap">
+<aside class="sidebar">
+<div class="sidebar-brand">SGLang Disaggregation</div>
+<nav class="toc">
+<a href="#s1">1. PD 分离架构概览</a>
+<a href="#s2">2. 基础抽象层</a>
+<a href="#s3">3. Prefill 引擎</a>
+<a href="#s4">4. Decode 引擎</a>
+<a href="#s5">5. KV Cache 传输后端</a>
+<a href="#s6">6. NIXL 传输引擎</a>
+<a href="#s7">7. Mooncake 传输引擎</a>
+<a href="#s8">8. 元数据与事件系统</a>
+<a href="#s9">9. 端到端数据流</a>
+</nav>
+</aside>
+<main>
+
+<h1>SGLang Disaggregation 分离架构深度解析</h1>
+<p class="subtitle">Prefill-Decode 分离、KV Cache 跨机传输、NIXL/Mooncake 后端 -- 源码级分析</p>
+
+<!-- ============================================================ -->
+<h2 id="s1">1. PD 分离架构概览</h2>
+
+<p>SGLang 的 Disaggregation（分离架构）将 LLM 推理的 <strong>Prefill（预填充）</strong> 和 <strong>Decode（解码）</strong> 阶段部署在不同的 GPU 实例上，通过高速网络传输 KV Cache，从而实现：</p>
+
+<ul>
+<li><strong>资源异构配置</strong>：Prefill 需要高计算密度，Decode 需要高内存带宽，可独立优化</li>
+<li><strong>弹性扩缩容</strong>：Prefill 和 Decode 实例可独立扩展</li>
+<li><strong>TTFT 优化</strong>：Prefill 实例专注首 Token 延迟，不受 Decode 影响</li>
+</ul>
+
+<div class="mermaid">
+graph LR
+    subgraph "Prefill 实例集群"
+        P1["Prefill GPU 0"]
+        P2["Prefill GPU 1"]
+    end
+
+    subgraph "Decode 实例集群"
+        D1["Decode GPU 0"]
+        D2["Decode GPU 1"]
+    end
+
+    Client["客户端请求"] --> Router["路由层"]
+    Router --> P1
+    Router --> P2
+    P1 -->|"KV Cache<br/>RDMA/NVLink"| D1
+    P2 -->|"KV Cache<br/>RDMA/NVLink"| D2
+    D1 --> Client
+    D2 --> Client
+
+    style P1 fill:#1c2128,stroke:#39d0d8,color:#e6edf3
+    style P2 fill:#1c2128,stroke:#39d0d8,color:#e6edf3
+    style D1 fill:#1c2128,stroke:#58a6ff,color:#e6edf3
+    style D2 fill:#1c2128,stroke:#58a6ff,color:#e6edf3
+    style Router fill:#1c2128,stroke:#e3b341,color:#e6edf3
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s2">2. 基础抽象层 (base/conn.py)</h2>
+
+<p>SGLang 定义了传输层的抽象接口，所有具体后端（NIXL、Mooncake、Ascend、Fake）必须实现这些接口。</p>
+
+<h3>2.1 核心抽象类</h3>
+
+<table>
+<tr><th>类</th><th>职责</th><th>关键方法</th></tr>
+<tr><td><code>KVArgs</code></td><td>KV 传输参数容器</td><td>kv_data_ptrs, kv_data_lens, kv_item_lens, page_size, engine_rank...</td></tr>
+<tr><td><code>KVPoll</code></td><td>传输状态枚举</td><td>Failed=0, Bootstrapping=1, WaitingForInput=2, Transferring=3, Success=4</td></tr>
+<tr><td><code>BaseKVManager</code></td><td>传输状态管理器</td><td>__init__(args, mode, server_args)</td></tr>
+<tr><td><code>BaseKVSender</code></td><td>KV Cache 发送端</td><td>init(), send(), poll(), failure_exception()</td></tr>
+<tr><td><code>BaseKVReceiver</code></td><td>KV Cache 接收端</td><td>init(), poll(), failure_exception(), clear(), abort()</td></tr>
+<tr><td><code>BaseKVBootstrapServer</code></td><td>引导服务器</td><td>__init__(host, port)</td></tr>
+</table>
+
+<h3>2.2 KVPoll 状态机</h3>
+
+<div class="mermaid">
+stateDiagram-v2
+    [*] --> Bootstrapping: 初始化连接
+    Bootstrapping --> WaitingForInput: 握手完成
+    Bootstrapping --> Failed: 连接失败
+    WaitingForInput --> Transferring: 开始传输
+    WaitingForInput --> Failed: 超时/错误
+    Transferring --> Success: 传输完成
+    Transferring --> Failed: 传输错误
+    Success --> [*]
+    Failed --> [*]
+</div>
+
+<h3>2.3 KVArgs 关键参数</h3>
+
+<table>
+<tr><th>参数</th><th>说明</th></tr>
+<tr><td><code>kv_data_ptrs</code></td><td>KV Cache 缓冲区的 GPU 指针列表（每层一个）</td></tr>
+<tr><td><code>kv_data_lens</code></td><td>各缓冲区的字节长度</td></tr>
+<tr><td><code>kv_item_lens</code></td><td>单个 KV 条目的字节长度（含所有 head）</td></tr>
+<tr><td><code>aux_data_ptrs</code></td><td>辅助数据（output_ids、logprobs 等）的指针</td></tr>
+<tr><td><code>state_data_ptrs</code></td><td>状态数据（Mamba/SWA/NSA 专用）的指针</td></tr>
+<tr><td><code>page_size</code></td><td>KV Cache 页大小</td></tr>
+<tr><td><code>decode_tp_size</code></td><td>Decode 端的 TP 大小（用于跨 TP 传输）</td></tr>
+<tr><td><code>prefill_pp_size</code></td><td>Prefill 端的 PP 级数</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="s3">3. Prefill 引擎</h2>
+
+<p>Prefill 端的请求生命周期经过三个队列阶段：</p>
+
+<div class="mermaid">
+graph LR
+    subgraph "Prefill 请求生命周期"
+        A["Bootstrap Queue<br/>初始化发送端<br/>握手 & 预分配"]
+        B["Waiting Queue<br/>PrefillAdder 调度<br/>执行 Forward"]
+        C["Inflight Queue<br/>异步 KV 传输<br/>轮询传输状态"]
+        D["完成<br/>释放 KV Cache<br/>返回结果"]
+    end
+
+    A -->|"握手完成<br/>KVPoll.WaitingForInput"| B
+    B -->|"Forward 完成<br/>send_kv_chunk()"| C
+    C -->|"KVPoll.Success"| D
+
+    style A fill:#1c2128,stroke:#e3b341,color:#e6edf3
+    style B fill:#1c2128,stroke:#39d0d8,color:#e6edf3
+    style C fill:#1c2128,stroke:#58a6ff,color:#e6edf3
+    style D fill:#1c2128,stroke:#3fb950,color:#e6edf3
+</div>
+
+<h3>3.1 PrefillBootstrapQueue</h3>
+
+<p>负责请求的连接建立和初始化：</p>
+
+<ol>
+<li>为每个请求创建 <code>KVSender</code> 实例</li>
+<li>通过 <code>poll_and_all_reduce()</code> 跨 TP rank 同步引导状态</li>
+<li>引导完成后分配 <code>metadata_buffer_index</code>，调用 <code>sender.init(num_pages)</code></li>
+<li>将请求移入 Waiting Queue</li>
+</ol>
+
+<div class="highlight">
+<strong>TP 一致性保证：</strong><code>poll_and_all_reduce()</code> 使用 Gloo AllReduce 对所有 TP rank 的 poll 结果取 MIN，确保只有所有 rank 都完成引导时请求才进入下一阶段。这避免了部分 rank 开始传输而其他 rank 尚未就绪的情况。
+</div>
+
+<pre><code>def poll_and_all_reduce(pollers, gloo_group):
+    polls = [int(poller.poll()) for poller in pollers]
+    tensor_to_reduce = torch.tensor(polls, dtype=torch.uint8, device="cpu")
+    dist.all_reduce(tensor_to_reduce, op=dist.ReduceOp.MIN, group=gloo_group)
+    return tensor_to_reduce.tolist()</code></pre>
+
+<h3>3.2 事件循环</h3>
+
+<p>Prefill 调度器提供两种事件循环模式：</p>
+
+<table>
+<tr><th>模式</th><th>特点</th></tr>
+<tr><td><code>event_loop_normal_disagg_prefill</code></td><td>同步处理：接收请求 -> 调度批次 -> 执行 -> 处理结果 -> 轮询传输</td></tr>
+<tr><td><code>event_loop_overlap_disagg_prefill</code></td><td>重叠执行：当前批次的 forward 与上一批次的结果处理并行</td></tr>
+</table>
+
+<h3>3.3 Chunked KV 传输</h3>
+
+<p>对于长序列的 chunked prefill，KV Cache 分块传输：</p>
+
+<ul>
+<li>非最后一块：延迟最后一个不完整页，仅传输 <code>end_idx - end_idx % page_size</code></li>
+<li>最后一块 (<code>last_chunk=True</code>)：传输剩余页并附带 metadata (output_ids, logprobs, hidden_states)</li>
+<li>通过 <code>req.start_send_idx</code> 追踪已发送的偏移量</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="s4">4. Decode 引擎</h2>
+
+<p>Decode 端的请求生命周期经过四个阶段：</p>
+
+<div class="mermaid">
+graph LR
+    subgraph "Decode 请求生命周期"
+        A["PreallocQueue<br/>初始化接收端<br/>握手 & 预分配内存"]
+        B["TransferQueue<br/>轮询 KV 传输状态<br/>接收 KV Cache"]
+        C["WaitingQueue<br/>构建 PrebuiltExtend<br/>跳过 Prefill Forward"]
+        D["RunningBatch<br/>合并到运行批次<br/>执行 Decode"]
+    end
+
+    A -->|"内存预分配<br/>receiver.init()"| B
+    B -->|"KVPoll.Success<br/>_commit_transfer_to_req()"| C
+    C -->|"prepare_for_prebuilt()"| D
+
+    style A fill:#1c2128,stroke:#e3b341,color:#e6edf3
+    style B fill:#1c2128,stroke:#39d0d8,color:#e6edf3
+    style C fill:#1c2128,stroke:#58a6ff,color:#e6edf3
+    style D fill:#1c2128,stroke:#3fb950,color:#e6edf3
+</div>
+
+<h3>4.1 DecodePreallocQueue -- 内存预分配</h3>
+
+<p>Decode 端的关键创新是 <strong>提前预分配 KV Cache 内存</strong>：</p>
+
+<ul>
+<li><code>DecodeReqToTokenPool</code> 扩展了标准的 <code>ReqToTokenPool</code>，增加了 <code>pre_alloc_size</code> 额外槽位</li>
+<li>运行中的请求受 <code>max_running_requests</code> 限制，但预分配请求可使用额外空间</li>
+<li>这解耦了预分配与运行的资源竞争，使 Prefill 端不被 Decode 端的内存压力阻塞</li>
+</ul>
+
+<div class="card">
+<p><strong>内存估算公式：</strong></p>
+<pre><code>allocatable_tokens = available_size - max(
+    num_reserved_decode_tokens * (running + transfer + waiting),
+    need_space_for_single_req  # 保证至少一个请求能完成
+)</code></pre>
+</div>
+
+<h3>4.2 DecodeTransferQueue -- 传输状态管理</h3>
+
+<p>当 KV 传输完成时，<code>_commit_transfer_to_req()</code> 从 metadata buffer 中提取：</p>
+
+<table>
+<tr><th>数据</th><th>来源</th><th>说明</th></tr>
+<tr><td>output_id</td><td>MetadataBuffers.output_ids</td><td>Prefill 生成的第一个 token</td></tr>
+<tr><td>cached_tokens</td><td>MetadataBuffers.cached_tokens</td><td>缓存命中的 token 数</td></tr>
+<tr><td>logprobs</td><td>MetadataBuffers.output_token_logprobs_*</td><td>token 级别 log 概率</td></tr>
+<tr><td>topk_p/index</td><td>MetadataBuffers.output_topk_*</td><td>投机解码的 top-k 信息</td></tr>
+<tr><td>hidden_states</td><td>MetadataBuffers.output_hidden_states</td><td>EAGLE 投机解码的隐藏状态</td></tr>
+</table>
+
+<h3>4.3 PrebuiltExtendBatch</h3>
+
+<p>Decode 端不执行真正的 Prefill Forward，而是构建"预构建扩展批次"：</p>
+
+<pre><code>new_batch.prepare_for_prebuilt()    # 标记为预构建模式
+new_batch.process_prebuilt(...)     # 填充元数据，跳过前向传播</code></pre>
+
+<h3>4.4 KV Cache 回收 (Retraction)</h3>
+
+<p>当 Decode 端内存不足时，支持请求回收 (retraction)：</p>
+<ol>
+<li>运行中的请求的 KV Cache 可被 offload 到 CPU</li>
+<li>回收的请求进入 <code>retracted_queue</code></li>
+<li><code>resume_retracted_reqs()</code> 在内存充裕时将请求恢复</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="s5">5. KV Cache 传输后端</h2>
+
+<p>SGLang 支持多种传输后端，通过工厂模式 <code>get_kv_class()</code> 选择：</p>
+
+<table>
+<tr><th>后端</th><th>枚举值</th><th>传输方式</th><th>适用场景</th></tr>
+<tr><td>NIXL</td><td><code>TransferBackend.NIXL</code></td><td>RDMA (InfiniBand/RoCE)</td><td>跨节点高速传输</td></tr>
+<tr><td>Mooncake</td><td><code>TransferBackend.MOONCAKE</code></td><td>RDMA + 自定义传输引擎</td><td>跨节点高速传输</td></tr>
+<tr><td>Ascend</td><td><code>TransferBackend.ASCEND</code></td><td>华为昇腾 D2D</td><td>昇腾平台</td></tr>
+<tr><td>Fake</td><td><code>TransferBackend.FAKE</code></td><td>无实际传输</td><td>测试/调试</td></tr>
+</table>
+
+<h3>5.1 工厂注册映射</h3>
+
+<pre><code>def get_kv_class(transfer_backend, class_type):
+    if transfer_backend == TransferBackend.NIXL:
+        return {
+            KVARGS: KVArgs,
+            MANAGER: NixlKVManager,
+            SENDER: NixlKVSender,
+            RECEIVER: NixlKVReceiver,
+            BOOTSTRAP_SERVER: NixlKVBootstrapServer,
+        }[class_type]
+    elif transfer_backend == TransferBackend.MOONCAKE:
+        return {
+            KVARGS: KVArgs,
+            MANAGER: MooncakeKVManager,
+            SENDER: MooncakeKVSender,
+            RECEIVER: MooncakeKVReceiver,
+            BOOTSTRAP_SERVER: MooncakeKVBootstrapServer,
+        }[class_type]
+    # ... Ascend, Fake</code></pre>
+
+<h3>5.2 页索引转换</h3>
+
+<p>KV Cache 使用分页管理。传输时需要将 token 级别的 kv_indices 转换为 page 级别：</p>
+
+<pre><code>def kv_to_page_indices(kv_indices, page_size):
+    if page_size == 1:
+        return kv_indices
+    return kv_indices[::page_size] // page_size
+
+def kv_to_page_num(num_kv_indices, page_size):
+    return (num_kv_indices + page_size - 1) // page_size</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="s6">6. NIXL 传输引擎</h2>
+
+<p>NIXL (Nvidia Interconnect eXchange Library) 是基于 RDMA 的高性能传输后端，通过 <code>nixl_agent</code> 实现 GPU 内存的直接远程写入。</p>
+
+<h3>6.1 架构组件</h3>
+
+<div class="mermaid">
+graph TB
+    subgraph "NIXL 传输架构"
+        subgraph "Prefill 端"
+            PM["NixlKVManager<br/>(Prefill Mode)"]
+            PS["NixlKVSender"]
+            PT["Bootstrap Thread<br/>ZMQ 接收"]
+        end
+
+        subgraph "Decode 端"
+            DM["NixlKVManager<br/>(Decode Mode)"]
+            DR["NixlKVReceiver"]
+            DH["Heartbeat Thread<br/>健康检查"]
+        end
+
+        subgraph "nixl_agent"
+            AG["NIXL Agent<br/>register_memory<br/>initialize_xfer<br/>transfer<br/>check_xfer_state<br/>get_new_notifs"]
+        end
+    end
+
+    DR -->|"ZMQ: 注册信息<br/>+ KV indices"| PT
+    PM --> AG
+    AG -->|"RDMA WRITE"| DM
+    AG -->|"Notification"| DR
+
+    style PM fill:#1c2128,stroke:#39d0d8,color:#e6edf3
+    style DM fill:#1c2128,stroke:#58a6ff,color:#e6edf3
+    style AG fill:#1c2128,stroke:#3fb950,color:#e6edf3
+</div>
+
+<h3>6.2 连接建立流程</h3>
+
+<ol>
+<li><strong>Decode 端注册</strong>：NixlKVReceiver 通过 ZMQ 向 Prefill 发送 <code>KVArgsRegisterInfo</code>（agent_metadata、kv_data_ptrs、gpu_id 等）</li>
+<li><strong>Prefill 端添加对端</strong>：<code>_add_remote_peer()</code> 调用 <code>agent.add_remote_agent()</code> 建立 RDMA 连接</li>
+<li><strong>传输请求</strong>：Decode 端发送 <code>TransferInfo</code>（room、dst_kv_indices、dst_aux_index）</li>
+<li><strong>Bootstrap 线程</strong>：当所有 Decode TP rank 的信息到齐时，标记 <code>KVPoll.WaitingForInput</code></li>
+</ol>
+
+<h3>6.3 KV Cache 传输</h3>
+
+<p><code>send_kvcache()</code> 的核心逻辑：</p>
+
+<ol>
+<li><strong>索引分组</strong>：<code>group_concurrent_contiguous()</code> 将连续的页索引合并为大块传输，减少 RDMA 操作数</li>
+<li><strong>构建描述符</strong>：计算源/目标地址（kv_ptr + index * item_len），调用 <code>agent.get_xfer_descs()</code></li>
+<li><strong>执行传输</strong>：<code>agent.initialize_xfer("WRITE", src, dst, peer, notif)</code> + <code>agent.transfer()</code></li>
+<li><strong>通知</strong>：传输完成后自动发送 notification 给 Decode 端</li>
+</ol>
+
+<h3>6.4 跨 TP 切片传输</h3>
+
+<p>当 Prefill 和 Decode 的 TP 大小不同时，<code>send_kvcache_slice()</code> 按 KV head 维度进行切片传输：</p>
+
+<div class="card">
+<p><strong>Head 分配逻辑：</strong></p>
+<ul>
+<li><strong>prefill_tp &gt; decode_tp</strong>：多个 Prefill rank 向一个 Decode rank 发送各自的 head 子集</li>
+<li><strong>prefill_tp &lt; decode_tp</strong>：一个 Prefill rank 向多个 Decode rank 发送 head 子集</li>
+</ul>
+<pre><code>dst_heads_per_rank = num_kv_heads * prefill_tp_size // decode_tp_size
+bytes_per_head_slice = dst_kv_item_len // page_size // dst_heads_per_rank</code></pre>
+</div>
+
+<h3>6.5 TransferStatus 追踪</h3>
+
+<p>Decode 端通过 <code>TransferStatus</code> 追踪多 PP rank 的分块传输进度：</p>
+
+<table>
+<tr><th>字段</th><th>说明</th></tr>
+<tr><td><code>received_kvs_per_pp</code></td><td>每个 PP rank 已接收的 chunk ID 集合</td></tr>
+<tr><td><code>expected_kvs_per_pp</code></td><td>每个 PP rank 预期的 chunk 总数（最后一个 chunk 设置）</td></tr>
+<tr><td><code>num_pp_ranks_expected</code></td><td>预期的 PP rank 总数</td></tr>
+<tr><td><code>received_aux</code></td><td>辅助数据（metadata）是否已接收</td></tr>
+</table>
+
+<h3>6.6 心跳与容错</h3>
+
+<p>Decode 端运行 <code>heartbeat_checker</code> 后台线程：</p>
+<ul>
+<li>周期性 HTTP GET <code>/health</code> 检查 Prefill 实例存活</li>
+<li>连续失败 <code>max_failures</code> 次后触发 <code>_handle_node_failure()</code></li>
+<li>标记所有关联的传输为 <code>KVPoll.Failed</code>，清理连接池</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="s7">7. Mooncake 传输引擎</h2>
+
+<p>Mooncake 是另一个 RDMA 传输后端，通过自定义的 <code>MooncakeTransferEngine</code> 实现。</p>
+
+<h3>7.1 与 NIXL 的差异</h3>
+
+<table>
+<tr><th>特性</th><th>NIXL</th><th>Mooncake</th></tr>
+<tr><td>传输库</td><td>nixl_agent (NVIDIA)</td><td>MooncakeTransferEngine</td></tr>
+<tr><td>通知机制</td><td>NIXL 内置 notification</td><td>ZMQ 消息传递</td></tr>
+<tr><td>连接管理</td><td>agent.add_remote_agent()</td><td>transfer_engine.install_transport()</td></tr>
+<tr><td>内存注册</td><td>agent.register_memory()</td><td>transfer_engine.register_memory()</td></tr>
+<tr><td>自定义内存池</td><td>不支持</td><td>支持 torch.cuda.MemPool</td></tr>
+<tr><td>失败检测</td><td>心跳 HTTP + notification</td><td>心跳 HTTP + transfer 状态检查</td></tr>
+</table>
+
+<h3>7.2 Mooncake 传输流程</h3>
+
+<div class="mermaid">
+sequenceDiagram
+    participant PS as Prefill Sender
+    participant PE as MooncakeTransferEngine
+    participant DE as MooncakeTransferEngine
+    participant DR as Decode Receiver
+
+    DR->>PS: ZMQ: TransferInfo (room, indices)
+    PS->>PE: transfer(src_addrs, dst_addrs, peer)
+    PE->>DE: RDMA WRITE (KV Cache 数据)
+
+    Note over PE,DE: 异步传输进行中
+
+    PS->>PS: poll(): check transfer handles
+    PE-->>PS: transfer complete
+
+    PS->>DR: ZMQ: transfer_done notification
+    DR->>DR: poll() -> KVPoll.Success
+</div>
+
+<h3>7.3 错误处理</h3>
+
+<p>Mooncake 定义了专用异常类 <code>KVTransferError</code>，包含 bootstrap_room 和 failure_reason，用于精确定位传输失败的请求。传输线程池使用 <code>concurrent.futures.ThreadPoolExecutor</code> 异步执行传输，通过 <code>FastQueue</code> 收集结果。</p>
+
+<!-- ============================================================ -->
+<h2 id="s8">8. 元数据与事件系统</h2>
+
+<h3>8.1 MetadataBuffers</h3>
+
+<p>Prefill 端在传输 KV Cache 的同时需要传输第一个输出 token 的元数据：</p>
+
+<table>
+<tr><th>缓冲区</th><th>形状</th><th>说明</th></tr>
+<tr><td><code>output_ids</code></td><td>(size, 16)</td><td>输出 token ID（RDMA 最小 64B 对齐）</td></tr>
+<tr><td><code>cached_tokens</code></td><td>(size, 16)</td><td>缓存命中 token 数</td></tr>
+<tr><td><code>output_token_logprobs_val</code></td><td>(size, 16)</td><td>token log 概率值</td></tr>
+<tr><td><code>output_token_logprobs_idx</code></td><td>(size, 16)</td><td>token log 概率索引</td></tr>
+<tr><td><code>output_top_logprobs_val/idx</code></td><td>(size, 128)</td><td>top-k logprobs</td></tr>
+<tr><td><code>output_topk_p/index</code></td><td>(size, 16)</td><td>投机解码 top-k</td></tr>
+<tr><td><code>output_hidden_states</code></td><td>(size, hidden_size)</td><td>EAGLE 隐藏状态</td></tr>
+</table>
+
+<h3>8.2 KV Events 事件系统</h3>
+
+<p><code>kv_events.py</code> 实现了 KV Cache 变化的事件发布系统，用于外部缓存感知路由：</p>
+
+<h4>事件类型</h4>
+
+<table>
+<tr><th>事件</th><th>说明</th></tr>
+<tr><td><code>BlockStored</code></td><td>新块存储：block_hashes, parent_block_hash, token_ids, block_size, lora_id</td></tr>
+<tr><td><code>BlockRemoved</code></td><td>块移除：block_hashes</td></tr>
+<tr><td><code>AllBlocksCleared</code></td><td>所有块清空</td></tr>
+</table>
+
+<h4>发布器架构</h4>
+
+<div class="mermaid">
+graph TB
+    subgraph "KV Events 发布系统"
+        A["Scheduler<br/>产生事件"]
+        B["EventPublisherFactory<br/>工厂创建"]
+        C["NullEventPublisher<br/>空操作（默认）"]
+        D["ZmqEventPublisher<br/>ZMQ PUB/ROUTER"]
+        E["PUB Socket<br/>实时推送"]
+        F["ROUTER Socket<br/>历史回放"]
+        G["Replay Buffer<br/>deque(maxlen=10000)"]
+    end
+
+    A --> B
+    B --> C
+    B --> D
+    D --> E
+    D --> F
+    D --> G
+
+    style D fill:#1c2128,stroke:#39d0d8,color:#e6edf3
+    style E fill:#1c2128,stroke:#58a6ff,color:#e6edf3
+    style F fill:#1c2128,stroke:#3fb950,color:#e6edf3
+</div>
+
+<p><code>ZmqEventPublisher</code> 的关键特性：</p>
+<ul>
+<li><strong>后台线程</strong>：独立线程消费事件队列，避免阻塞主调度循环</li>
+<li><strong>序列号</strong>：每个事件批次分配单调递增序列号，支持断点续传</li>
+<li><strong>回放支持</strong>：ROUTER socket 接受 REQ，返回指定序列号之后的所有缓存事件</li>
+<li><strong>DP 感知</strong>：每个 DP rank 有独立的 publisher，通过端口偏移区分</li>
+<li><strong>msgspec 序列化</strong>：使用 msgspec.msgpack 实现高效二进制序列化</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="s9">9. 端到端数据流</h2>
+
+<div class="mermaid">
+sequenceDiagram
+    participant Client as 客户端
+    participant Router as 路由器
+    participant PScheduler as Prefill Scheduler
+    participant PBootstrap as Bootstrap Queue
+    participant PGPU as Prefill GPU
+    participant PInflight as Inflight Queue
+    participant Transport as RDMA 传输
+    participant DPrealloc as Decode PreallocQ
+    participant DTransfer as Decode TransferQ
+    participant DGPU as Decode GPU
+
+    Client->>Router: 推理请求
+    Router->>PScheduler: 路由到 Prefill
+    PScheduler->>PBootstrap: add(req)
+    PBootstrap->>PBootstrap: 创建 KVSender<br/>ZMQ 握手
+
+    Note over PBootstrap,DPrealloc: Bootstrap Phase
+
+    par Decode 端并行
+        Router->>DPrealloc: 路由到 Decode
+        DPrealloc->>DPrealloc: 创建 KVReceiver<br/>ZMQ 注册 KV 指针
+    end
+
+    PBootstrap-->>PScheduler: pop_bootstrapped()
+    PScheduler->>PGPU: forward(batch)
+    PGPU-->>PScheduler: logits, KV Cache
+
+    PScheduler->>PInflight: send_kv_chunk(req)
+    PInflight->>Transport: RDMA WRITE<br/>(KV + metadata)
+
+    DPrealloc->>DPrealloc: _pre_alloc()<br/>预分配 KV 内存
+    DPrealloc->>DTransfer: 移入传输队列
+
+    Transport-->>DTransfer: KV 传输完成
+    DTransfer->>DTransfer: _commit_transfer_to_req()
+
+    DTransfer-->>DGPU: PrebuiltExtendBatch
+    DGPU->>DGPU: Decode Forward
+
+    loop 自回归解码
+        DGPU->>DGPU: decode step
+    end
+
+    DGPU->>Client: 生成结果
+</div>
+
+<h3>9.1 混合模型支持</h3>
+
+<p>分离架构还支持混合架构模型的状态传输：</p>
+
+<table>
+<tr><th>模型类型</th><th>state_type</th><th>传输内容</th></tr>
+<tr><td>标准 Transformer</td><td>"none"</td><td>仅 KV Cache</td></tr>
+<tr><td>Mamba 混合</td><td>"mamba"</td><td>KV Cache + Mamba 状态索引</td></tr>
+<tr><td>SWA (Sliding Window)</td><td>"swa"</td><td>KV Cache + 滑动窗口 KV 索引</td></tr>
+<tr><td>NSA (Native Sparse Attention)</td><td>"nsa"</td><td>KV Cache + 完整 KV 索引</td></tr>
+</table>
+
+<h3>9.2 性能优化要点</h3>
+
+<div class="card">
+<ul>
+<li><strong>连续索引合并</strong>：<code>group_concurrent_contiguous()</code> 将相邻页合并为单次 RDMA 操作</li>
+<li><strong>异步传输</strong>：KV 传输在独立 CUDA Stream / RDMA 通道上执行，不阻塞计算</li>
+<li><strong>预分配解耦</strong>：Decode 端提前分配内存，使 Prefill 可以立即开始传输</li>
+<li><strong>Overlap 模式</strong>：支持计算与传输的流水线重叠</li>
+<li><strong>故障快速检测</strong>：心跳机制 + 超时检测，快速标记失败请求</li>
+<li><strong>TP 一致性</strong>：所有 TP rank 通过 Gloo AllReduce 同步 poll 状态</li>
+</ul>
+</div>
+
+</main>
+</div>
+<script>mermaid.initialize({theme:'dark',themeVariables:{primaryColor:'#1c2128',primaryTextColor:'#e6edf3',primaryBorderColor:'#30363d',lineColor:'#58a6ff',secondaryColor:'#161b22',tertiaryColor:'#0d1117'}})</script>
+</body>
+</html>

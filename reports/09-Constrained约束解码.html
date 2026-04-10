@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang Constrained 约束解码深度解析">
+  <meta name="report-type"  content="repo">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang Constrained 约束解码深度解析">
+  <meta name="report-type"  content="sglang">
+  <meta name="report-date"  content="2026-04-10">
+  <meta name="report-tags"  content="">
+  <meta name="report-desc"  content="">
+
+  <title>SGLang Constrained 约束解码深度解析</title>
+  <!-- RESEARCH_META
+  title: SGLang Constrained 约束解码深度解析
+  date: 2026-04-10
+  tags: SGLang, Constrained Decoding, XGrammar, Outlines, LLGuidance, JSON Schema, Regex, EBNF, Jump Forward
+  summary: 深入分析 SGLang 约束解码子系统的完整架构，涵盖 Grammar Backend 抽象体系、XGrammar/Outlines/LLGuidance 三大后端集成、GrammarManager 异步协调、Jump-Forward 优化、Reasoner Grammar 推理支持等核心机制。
+  -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:         #0d1117;
+      --bg2:        #161b22;
+      --bg3:        #1c2128;
+      --border:     #30363d;
+      --text:       #e6edf3;
+      --text2:      #8b949e;
+      --text3:      #656d76;
+      --cyan:       #39d0d8;
+      --blue:       #58a6ff;
+      --green:      #3fb950;
+      --yellow:     #e3b341;
+      --orange:     #f78166;
+      --purple:     #bc8cff;
+      --red:        #f85149;
+      --font-mono:  'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.75;
+      font-size: 16px;
+    }
+    .page-wrap {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      min-height: 100vh;
+    }
+    @media (max-width: 900px) {
+      .page-wrap { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+    }
+    .sidebar {
+      position: sticky; top: 0; height: 100vh; overflow-y: auto;
+      background: var(--bg2); border-right: 1px solid var(--border); padding: 24px 16px;
+    }
+    .sidebar-brand { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text3); margin-bottom: 16px; }
+    .toc a { display: block; padding: 6px 8px; font-size: 13px; color: var(--text2); text-decoration: none; border-radius: 6px; margin-bottom: 2px; transition: all 0.15s; }
+    .toc a:hover, .toc a.active { background: var(--bg3); color: var(--cyan); }
+    .toc .sub { padding-left: 16px; font-size: 12px; }
+    main { max-width: 960px; margin: 0 auto; padding: 48px 32px; }
+    h1 { font-size: 2.2rem; margin-bottom: 8px; background: linear-gradient(135deg, var(--cyan), var(--blue)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .subtitle { color: var(--text2); font-size: 1rem; margin-bottom: 40px; }
+    h2 { font-size: 1.5rem; color: var(--cyan); margin: 48px 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+    h3 { font-size: 1.15rem; color: var(--blue); margin: 32px 0 12px; }
+    h4 { font-size: 1rem; color: var(--purple); margin: 24px 0 8px; }
+    p, li { color: var(--text); margin-bottom: 12px; }
+    ul, ol { padding-left: 24px; }
+    li { margin-bottom: 6px; }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 16px 0; }
+    .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin: 16px 0; }
+    .card h4 { margin-top: 0; }
+    .tag { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; margin: 2px 4px 2px 0; }
+    .tag-cyan { background: rgba(57,208,216,0.15); color: var(--cyan); }
+    .tag-blue { background: rgba(88,166,255,0.15); color: var(--blue); }
+    .tag-green { background: rgba(63,185,80,0.15); color: var(--green); }
+    .tag-yellow { background: rgba(227,179,65,0.15); color: var(--yellow); }
+    .tag-orange { background: rgba(247,129,102,0.15); color: var(--orange); }
+    .tag-purple { background: rgba(188,140,255,0.15); color: var(--purple); }
+    .tag-red { background: rgba(248,81,73,0.15); color: var(--red); }
+    table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+    th, td { padding: 10px 14px; text-align: left; border: 1px solid var(--border); }
+    th { background: var(--bg3); color: var(--cyan); font-weight: 600; }
+    td { background: var(--bg2); }
+    code { font-family: var(--font-mono); background: var(--bg3); padding: 2px 6px; border-radius: 4px; font-size: 0.9em; color: var(--orange); }
+    pre { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; margin: 16px 0; font-size: 13px; line-height: 1.6; }
+    pre code { background: none; padding: 0; color: var(--text); }
+    .mermaid { background: var(--bg2); border-radius: 12px; padding: 20px; margin: 16px 0; display: flex; justify-content: center; }
+    .highlight { background: rgba(57,208,216,0.08); border-left: 3px solid var(--cyan); padding: 16px 20px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+    .warn { background: rgba(227,179,65,0.08); border-left: 3px solid var(--yellow); padding: 16px 20px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+    .metric-row { display: flex; gap: 16px; flex-wrap: wrap; margin: 16px 0; }
+    .metric-box { flex: 1; min-width: 140px; background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 16px; text-align: center; }
+    .metric-box .val { font-size: 1.6rem; font-weight: 700; color: var(--cyan); }
+    .metric-box .label { font-size: 12px; color: var(--text3); margin-top: 4px; }
+  </style>
+</head>
+<body>
+<div class="page-wrap">
+  <nav class="sidebar">
+    <div class="sidebar-brand">SGLang Research</div>
+    <div class="toc">
+      <a href="#overview">概述</a>
+      <a href="#architecture">整体架构</a>
+      <a href="#base-grammar" class="sub">基础抽象</a>
+      <a href="#grammar-object" class="sub">GrammarObject</a>
+      <a href="#grammar-backend" class="sub">GrammarBackend</a>
+      <a href="#xgrammar">XGrammar 后端</a>
+      <a href="#xg-grammar" class="sub">XGrammarGrammar</a>
+      <a href="#xg-backend" class="sub">XGrammarBackend</a>
+      <a href="#xg-bitmask" class="sub">Bitmask 机制</a>
+      <a href="#outlines">Outlines 后端</a>
+      <a href="#outlines-grammar" class="sub">OutlinesGrammar</a>
+      <a href="#outlines-backend" class="sub">OutlinesBackend</a>
+      <a href="#jump-forward">Jump Forward 优化</a>
+      <a href="#jf-algorithm" class="sub">FSM 分析算法</a>
+      <a href="#jf-map" class="sub">JumpForwardMap</a>
+      <a href="#llguidance">LLGuidance 后端</a>
+      <a href="#llg-grammar" class="sub">GuidanceGrammar</a>
+      <a href="#llg-backend" class="sub">GuidanceBackend</a>
+      <a href="#reasoner">Reasoner Grammar</a>
+      <a href="#reasoner-object" class="sub">ReasonerGrammarObject</a>
+      <a href="#reasoner-backend" class="sub">ReasonerGrammarBackend</a>
+      <a href="#grammar-manager">GrammarManager</a>
+      <a href="#gm-queue" class="sub">异步队列</a>
+      <a href="#gm-sync" class="sub">多 Rank 同步</a>
+      <a href="#dispatch">约束类型分发</a>
+      <a href="#comparison">后端对比</a>
+      <a href="#summary">总结</a>
+    </div>
+  </nav>
+
+  <main>
+    <h1>SGLang Constrained 约束解码深度解析</h1>
+    <p class="subtitle">Grammar-Guided Generation &mdash; 从 JSON Schema 到 Token Bitmask 的完整约束管线</p>
+
+    <!-- ============================================================ -->
+    <h2 id="overview">1. 概述</h2>
+
+    <p>约束解码（Constrained Decoding）是让 LLM 输出严格符合特定格式（如 JSON Schema、正则表达式、EBNF 语法）的关键技术。SGLang 实现了一套<strong>多后端、异步编译、缓存友好</strong>的约束解码架构。</p>
+
+    <div class="card-grid">
+      <div class="card">
+        <h4>XGrammar 后端</h4>
+        <p>默认后端，基于高性能 C++ 库，支持 JSON Schema、Regex、EBNF、Structural Tag。使用 token bitmask 实现高效约束。</p>
+        <span class="tag tag-cyan">默认</span>
+        <span class="tag tag-green">高性能</span>
+      </div>
+      <div class="card">
+        <h4>Outlines 后端</h4>
+        <p>基于 Python 的 outlines 库，通过 FSM (有限状态机) 引导正则表达式匹配。支持 JSON Schema 到 Regex 的转换。</p>
+        <span class="tag tag-blue">FSM</span>
+        <span class="tag tag-purple">Python</span>
+      </div>
+      <div class="card">
+        <h4>LLGuidance 后端</h4>
+        <p>基于 Rust 实现的 llguidance 库，提供 JSON Schema、Regex、EBNF、Structural Tag 全面支持。</p>
+        <span class="tag tag-orange">Rust</span>
+        <span class="tag tag-yellow">全面</span>
+      </div>
+      <div class="card">
+        <h4>GrammarManager</h4>
+        <p>异步协调器，管理语法编译队列、缓存命中、多 Rank 同步、超时处理。</p>
+        <span class="tag tag-red">Async</span>
+        <span class="tag tag-cyan">Coordination</span>
+      </div>
+    </div>
+
+    <div class="metric-row">
+      <div class="metric-box"><div class="val">3</div><div class="label">Grammar 后端</div></div>
+      <div class="metric-box"><div class="val">5+</div><div class="label">约束类型</div></div>
+      <div class="metric-box"><div class="val">Async</div><div class="label">编译模式</div></div>
+      <div class="metric-box"><div class="val">Bitmask</div><div class="label">掩码策略</div></div>
+    </div>
+
+    <!-- ============================================================ -->
+    <h2 id="architecture">2. 整体架构</h2>
+
+    <h3 id="base-grammar">2.1 架构总览</h3>
+
+    <div class="mermaid">
+graph TB
+    subgraph "用户请求"
+        JSON["json_schema"]
+        REGEX["regex"]
+        EBNF["ebnf"]
+        STAG["structural_tag"]
+    end
+
+    subgraph "GrammarManager"
+        GM["GrammarManager<br/>异步队列 + 缓存"]
+        QUEUE["grammar_queue<br/>Future 队列"]
+        CACHE["cache<br/>编译结果缓存"]
+    end
+
+    subgraph "Grammar Backend"
+        BGB["BaseGrammarBackend<br/>抽象接口"]
+        XGB["XGrammarGrammarBackend"]
+        OGB["OutlinesGrammarBackend"]
+        LGB["GuidanceBackend"]
+        RGB["ReasonerGrammarBackend<br/>装饰器"]
+    end
+
+    subgraph "Grammar Object"
+        BGO["BaseGrammarObject<br/>抽象接口"]
+        XGO["XGrammarGrammar<br/>bitmask"]
+        OGO["OutlinesGrammar<br/>bool mask"]
+        LGO["GuidanceGrammar<br/>bitmask"]
+        RGO["ReasonerGrammarObject<br/>装饰器"]
+    end
+
+    subgraph "采样集成"
+        SBI["SamplingBatchInfo<br/>vocab_mask / grammars"]
+        LOGITS["logits 掩码应用"]
+    end
+
+    JSON --> GM
+    REGEX --> GM
+    EBNF --> GM
+    STAG --> GM
+
+    GM --> QUEUE
+    GM --> CACHE
+    GM --> BGB
+
+    BGB --> XGB
+    BGB --> OGB
+    BGB --> LGB
+    BGB --> RGB
+
+    XGB --> XGO
+    OGB --> OGO
+    LGB --> LGO
+    RGB --> RGO
+
+    XGO --> SBI
+    OGO --> SBI
+    LGO --> SBI
+    RGO --> SBI
+    SBI --> LOGITS
+
+    style GM fill:#1c2128,stroke:#39d0d8,color:#e6edf3
+    style BGB fill:#1c2128,stroke:#58a6ff,color:#e6edf3
+    style BGO fill:#1c2128,stroke:#3fb950,color:#e6edf3
+    style SBI fill:#1c2128,stroke:#e3b341,color:#e6edf3
+    style RGB fill:#1c2128,stroke:#f85149,color:#e6edf3
+    style RGO fill:#1c2128,stroke:#f85149,color:#e6edf3
+    </div>
+
+    <h3 id="grammar-object">2.2 BaseGrammarObject 抽象</h3>
+
+    <p><code>BaseGrammarObject</code> 是所有语法对象的基类，定义了约束解码过程中语法状态机需要实现的核心接口：</p>
+
+    <div class="mermaid">
+classDiagram
+    class BaseGrammarObject {
+        -_finished: bool
+        +grammar_stats: GrammarStats
+        +current_token: int
+        +accept_token(token: int)
+        +rollback(k: int)
+        +is_terminated() bool
+        +allocate_vocab_mask(vocab_size, batch_size, device) Tensor
+        +fill_vocab_mask(vocab_mask, idx)
+        +move_vocab_mask(vocab_mask, device)$ Tensor
+        +apply_vocab_mask(logits, vocab_mask)$
+        +copy() BaseGrammarObject
+        +try_jump_forward(tokenizer) Optional
+        +jump_forward_str_state(helper) Tuple
+        +jump_and_retokenize(old_ids, new_ids, state)
+        +maybe_init_reasoning(reasoning: bool)
+    }
+
+    class GrammarStats {
+        +compilation_time: float
+        +schema_count: int
+        +ebnf_size: int
+        +is_cache_hit: bool
+        +is_grammar_aborted: bool
+        +tree_traversal_time: List
+        +dispatch_type: str
+        +num_timeout: int
+    }
+
+    BaseGrammarObject --> GrammarStats
+    </div>
+
+    <p>核心方法职责：</p>
+    <table>
+      <tr><th>方法</th><th>职责</th></tr>
+      <tr><td><code>accept_token(token)</code></td><td>语法状态机接受一个 token，推进状态</td></tr>
+      <tr><td><code>rollback(k)</code></td><td>回滚 k 步，用于 speculative decoding 验证失败时</td></tr>
+      <tr><td><code>is_terminated()</code></td><td>判断语法是否已经到达终止状态</td></tr>
+      <tr><td><code>allocate_vocab_mask()</code></td><td>分配词表掩码张量（bitmask 或 bool mask）</td></tr>
+      <tr><td><code>fill_vocab_mask()</code></td><td>根据当前语法状态填充掩码，标记合法 token</td></tr>
+      <tr><td><code>apply_vocab_mask()</code></td><td>将掩码应用到 logits 上（非法 token 设为 -inf）</td></tr>
+      <tr><td><code>try_jump_forward()</code></td><td>尝试跳过确定性前缀，加速解码</td></tr>
+      <tr><td><code>copy()</code></td><td>创建副本，用于缓存命中时共享编译结果</td></tr>
+    </table>
+
+    <h3 id="grammar-backend">2.3 BaseGrammarBackend 后端抽象</h3>
+
+    <p><code>BaseGrammarBackend</code> 负责语法对象的编译和缓存管理：</p>
+
+    <pre><code>class BaseGrammarBackend:
+    def __init__(self):
+        self.executor = ThreadPoolExecutor()   # 异步编译线程池
+        self.cache: Dict[Tuple[str, str], CacheEntry] = {}  # 编译缓存
+
+    def get_cached_or_future_value(self, key, require_reasoning):
+        value = self.cache.get(key)
+        if value:
+            return value.copy(), True   # 缓存命中，返回副本
+        # 缓存未命中，提交到线程池异步编译
+        value = self.executor.submit(self._init_value_dispatch, key, require_reasoning)
+        return value, False</code></pre>
+
+    <p>分发机制通过 <code>_init_value_dispatch()</code> 根据 key 类型路由到对应的 <code>dispatch_json/dispatch_regex/dispatch_ebnf/dispatch_structural_tag</code> 方法。</p>
+
+    <div class="highlight">
+      <strong>后端注册机制</strong> &mdash; SGLang 提供了 <code>GRAMMAR_BACKEND_REGISTRY</code> 字典和 <code>register_grammar_backend()</code> 函数，允许第三方注册自定义 grammar 后端。<code>create_grammar_backend()</code> 优先查找注册表，找不到时回退到内置后端。
+    </div>
+
+    <!-- ============================================================ -->
+    <h2 id="xgrammar">3. XGrammar 后端</h2>
+
+    <p>XGrammar 是 SGLang 的默认约束解码后端，基于高性能 C++ 库 <code>xgrammar</code>，提供快速的语法编译和 token bitmask 机制。</p>
+
+    <h3 id="xg-grammar">3.1 XGrammarGrammar 对象</h3>
+
+    <div class="card">
+      <h4>核心属性</h4>
+      <ul>
+        <li><code>matcher: GrammarMatcher</code> &mdash; xgrammar 的核心匹配器，管理语法状态机</li>
+        <li><code>ctx: CompiledGrammar</code> &mdash; 编译后的语法对象，可复用创建新 matcher</li>
+        <li><code>vocab_size: int</code> &mdash; 词表大小</li>
+        <li><code>override_stop_tokens</code> &mdash; 覆盖的停止 token 列表</li>
+        <li><code>accepted_tokens: List[int]</code> &mdash; 已接受的 token 历史，用于调试和回滚</li>
+      </ul>
+    </div>
+
+    <pre><code># Token 接受与回滚
+def accept_token(self, token: int):
+    if not self.is_terminated():
+        accepted = self.matcher.accept_token(token)
+        if not accepted:
+            raise ValueError(f"Token not accepted: {token}")
+        self.accepted_tokens.append(token)
+
+def rollback(self, k: int):
+    self.matcher.rollback(k)
+    self.accepted_tokens = self.accepted_tokens[:-k]
+
+# 复制：共享 CompiledGrammar，创建新 GrammarMatcher
+def copy(self):
+    matcher = GrammarMatcher(self.ctx, max_rollback_tokens=200,
+                             override_stop_tokens=self.override_stop_tokens)
+    return XGrammarGrammar(matcher, self.vocab_size, self.ctx, ...)</code></pre>
+
+    <h3 id="xg-backend">3.2 XGrammarGrammarBackend</h3>
+
+    <p>后端负责初始化 <code>GrammarCompiler</code> 和处理各种约束类型的编译：</p>
+
+    <div class="mermaid">
+flowchart TD
+    INIT["XGrammarGrammarBackend.__init__()"] --> TOKEN_INFO{"tokenizer 类型?"}
+    TOKEN_INFO -->|有 init_xgrammar| SPECIAL["tokenizer.init_xgrammar()<br/>特殊 tokenizer 处理"]
+    TOKEN_INFO -->|标准 HF| HF["TokenizerInfo.from_huggingface()<br/>标准初始化"]
+    SPECIAL --> COMPILER["GrammarCompiler(tokenizer_info)"]
+    HF --> COMPILER
+
+    subgraph "dispatch 分发"
+        D_JSON["dispatch_json()"]
+        D_REGEX["dispatch_regex()"]
+        D_EBNF["dispatch_ebnf()"]
+        D_STAG["dispatch_structural_tag()"]
+    end
+
+    COMPILER --> D_JSON
+    COMPILER --> D_REGEX
+    COMPILER --> D_EBNF
+    COMPILER --> D_STAG
+
+    D_JSON -->|"$$ANY$$"| BUILTIN["compile_builtin_json_grammar()"]
+    D_JSON -->|具体 schema| SCHEMA["compile_json_schema(schema, any_whitespace)"]
+    D_REGEX --> REGEX_C["compile_regex(key_string)"]
+    D_EBNF --> EBNF_C["compile_grammar(key_string)"]
+    D_STAG --> STAG_C["compile_structural_tag(tags, triggers)"]
+
+    BUILTIN --> FROM_CTX["_from_context() -> XGrammarGrammar"]
+    SCHEMA --> FROM_CTX
+    REGEX_C --> FROM_CTX
+    EBNF_C --> FROM_CTX
+    STAG_C --> FROM_CTX
+
+    style COMPILER fill:#1c2128,stroke:#39d0d8,color:#e6edf3
+    style FROM_CTX fill:#1c2128,stroke:#3fb950,color:#e6edf3
+    </div>
+
+    <h4>Structural Tag 处理</h4>
+
+    <p>XGrammar 支持两种 Structural Tag 格式：</p>
+    <ul>
+      <li><strong>Legacy 格式</strong>：包含 <code>structures</code>（含 begin/schema/end）和 <code>triggers</code> 字段。通过 <code>is_legacy_structural_tag()</code> 检测</li>
+      <li><strong>新格式</strong>：包含 <code>format</code> 字段，支持嵌套的 tag/sequence/or/triggered_tags 等结构类型。<code>_sanitize_structural_format()</code> 递归补全缺失的 <code>json_schema</code></li>
+    </ul>
+
+    <h3 id="xg-bitmask">3.3 Token Bitmask 机制</h3>
+
+    <p>XGrammar 使用<strong>压缩 bitmask</strong>（而非 bool mask）来表示合法 token 集合，大幅节省内存和带宽：</p>
+
+    <div class="card">
+      <h4>Bitmask 工作流</h4>
+      <ol>
+        <li><strong>分配</strong>：<code>allocate_token_bitmask(batch_size, vocab_size)</code> 分配压缩 bitmask 张量</li>
+        <li><strong>填充</strong>：<code>matcher.fill_next_token_bitmask(vocab_mask, idx)</code> 根据当前状态设置合法 token 位</li>
+        <li><strong>移动</strong>：<code>vocab_mask.to(device, non_blocking=True)</code> 异步传输到 GPU</li>
+        <li><strong>应用</strong>：通过 Triton 或 CUDA 内核原地修改 logits</li>
+      </ol>
+    </div>
+
+    <pre><code># 应用掩码 - 根据平台选择实现
+def apply_vocab_mask(self, logits, vocab_mask):
+    if logits.device.type in ("cuda", "npu", "xpu"):
+        if _is_hip:
+            apply_token_bitmask_inplace_cuda(logits, vocab_mask)  # AMD HIP
+        else:
+            apply_token_bitmask_inplace_triton(logits, vocab_mask)  # Triton</code></pre>
+
+    <div class="highlight">
+      <strong>Bitmask vs Bool Mask</strong> &mdash; XGrammar 的 bitmask 将每个 token 用 1 bit 表示（词表 128K 仅需 16KB），而 Outlines 的 bool mask 每个 token 用 1 byte（需 128KB）。bitmask 方案内存效率高 8 倍，但需要专用内核解码。
+    </div>
+
+    <h3>3.4 Jump Forward 支持</h3>
+
+    <p>XGrammar 原生支持 jump forward 优化：</p>
+
+    <pre><code>def try_jump_forward(self, tokenizer):
+    s = self.matcher.find_jump_forward_string()  # xgrammar 原生接口
+    if s:
+        return [], s
+    return None
+
+def jump_and_retokenize(self, old_output_ids, new_output_ids, next_state):
+    # 找到最长公共前缀
+    k = 0
+    for i, old_id in enumerate(old_output_ids):
+        if old_id == new_output_ids[i]:
+            k = i + 1
+        else:
+            break
+    # 回滚差异部分
+    if k < len(old_output_ids):
+        self.matcher.rollback(len(old_output_ids) - k)
+    # 重新接受新 token
+    for i in range(k, len(new_output_ids)):
+        self.matcher.accept_token(new_output_ids[i])</code></pre>
+
+    <!-- ============================================================ -->
+    <h2 id="outlines">4. Outlines 后端</h2>
+
+    <h3 id="outlines-grammar">4.1 OutlinesGrammar 对象</h3>
+
+    <p>Outlines 后端基于 <code>RegexGuide</code>（有限状态机）实现约束解码：</p>
+
+    <div class="card">
+      <h4>核心差异</h4>
+      <ul>
+        <li><strong>状态追踪</strong>：维护一个整数 <code>state</code>，通过 <code>guide.get_next_state(state, token)</code> 推进</li>
+        <li><strong>掩码类型</strong>：使用 <code>torch.bool</code> 张量（True = 禁止），而非 bitmask</li>
+        <li><strong>掩码填充</strong>：从 <code>guide.get_next_instruction(state).tokens</code> 获取合法 token 列表，然后反向标记</li>
+        <li><strong>掩码应用</strong>：<code>logits.masked_fill_(vocab_mask, float("-inf"))</code></li>
+      </ul>
+    </div>
+
+    <pre><code># 填充掩码 - 反向逻辑（标记禁止的 token）
+def fill_vocab_mask(self, vocab_mask, idx):
+    tokens = torch.tensor(
+        self.guide.get_next_instruction(self.state).tokens, dtype=torch.int64
+    ).to(vocab_mask.device)
+    vocab_mask = vocab_mask[idx]
+    vocab_mask.fill_(1)           # 先全部标记为禁止
+    vocab_mask.scatter_(0, tokens, False)  # 合法 token 取消禁止
+
+# 应用掩码
+@staticmethod
+def apply_vocab_mask(logits, vocab_mask):
+    logits.masked_fill_(vocab_mask, float("-inf"))</code></pre>
+
+    <h3 id="outlines-backend">4.2 OutlinesGrammarBackend</h3>
+
+    <p>Outlines 后端将所有约束类型统一转换为正则表达式，然后通过 <code>RegexGuide</code> 构建 FSM：</p>
+
+    <div class="mermaid">
+flowchart LR
+    JSON["JSON Schema"] --> REGEX_BUILD["build_regex_from_schema()"]
+    REGEX_BUILD --> REGEX["正则表达式"]
+    REGEX_IN["用户 Regex"] --> REGEX
+    REGEX --> GUIDE["RegexGuide.from_regex()"]
+    GUIDE --> OG["OutlinesGrammar"]
+
+    style JSON fill:#1c2128,stroke:#58a6ff,color:#e6edf3
+    style REGEX fill:#1c2128,stroke:#39d0d8,color:#e6edf3
+    style OG fill:#1c2128,stroke:#3fb950,color:#e6edf3
+    </div>
+
+    <div class="warn">
+      <strong>功能限制</strong> &mdash; Outlines 后端<strong>不支持</strong> EBNF 和 Structural Tag 约束类型，调用这些方法时会打印警告并返回 None。JSON Schema 支持通过 <code>build_regex_from_schema()</code> 先转换为正则表达式再处理。
+    </div>
+
+    <!-- ============================================================ -->
+    <h2 id="jump-forward">5. Jump Forward 优化</h2>
+
+    <p>Jump Forward（跳跃前进）是 SGLang 独创的约束解码加速技术，源自 <a href="https://lmsys.org/blog/2024-02-05-compressed-fsm/">Compressed Finite State Machine</a> 论文。</p>
+
+    <h3 id="jf-algorithm">5.1 核心思想</h3>
+
+    <div class="card">
+      <h4>问题</h4>
+      <p>在约束解码中，语法状态机的某些状态可能只有<strong>唯一的后继路径</strong>（例如在输出 JSON key <code>"name":</code> 时，引号后面的字符是确定的）。逐 token 解码这些确定性前缀浪费了大量计算。</p>
+      <h4>解决方案</h4>
+      <p>通过预分析 FSM，找出所有<strong>单出边状态</strong>（只有一个可能的下一步），将这些连续的确定性步骤链接成跳跃路径，一次性跳过多个 token 的生成。</p>
+    </div>
+
+    <div class="mermaid">
+flowchart LR
+    S0["状态 0<br/>多出边"] --> S1["状态 1<br/>单出边: 'n'"]
+    S1 --> S2["状态 2<br/>单出边: 'a'"]
+    S2 --> S3["状态 3<br/>单出边: 'm'"]
+    S3 --> S4["状态 4<br/>单出边: 'e'"]
+    S4 --> S5["状态 5<br/>多出边"]
+
+    S0 -.->|"Jump Forward: 'name'"| S5
+
+    style S0 fill:#1c2128,stroke:#39d0d8,color:#e6edf3
+    style S5 fill:#1c2128,stroke:#3fb950,color:#e6edf3
+    style S1 fill:#1c2128,stroke:#e3b341,color:#e6edf3
+    style S2 fill:#1c2128,stroke:#e3b341,color:#e6edf3
+    style S3 fill:#1c2128,stroke:#e3b341,color:#e6edf3
+    style S4 fill:#1c2128,stroke:#e3b341,color:#e6edf3
+    </div>
+
+    <h3 id="jf-map">5.2 FSM 分析算法</h3>
+
+    <p><code>outlines_jump_forward.py</code> 中的 <code>init_state_to_jump_forward()</code> 函数分析 Outlines 的 byte-level FSM：</p>
+
+    <div class="card">
+      <h4>算法步骤</h4>
+      <ol>
+        <li><strong>解析正则</strong>：<code>interegular.parse_pattern(regex) -> FSM</code></li>
+        <li><strong>字节级转换</strong>：<code>make_byte_level_fsm() -> byte FSM</code></li>
+        <li><strong>确定化</strong>：<code>make_deterministic_fsm() -> deterministic FSM</code></li>
+        <li><strong>出边计数</strong>：遍历所有转移边，统计每个状态的出边数量
+          <ul>
+            <li>终止状态默认有 1 条出边（可终止路径）</li>
+            <li><code>anything_value</code> 通配符边不计入跳跃分析</li>
+          </ul>
+        </li>
+        <li><strong>构建跳跃表</strong>：只保留恰好有 1 条出边的状态作为跳跃点</li>
+        <li><strong>字节级处理</strong>：分别处理 ASCII 字符和多字节 UTF-8 转移</li>
+      </ol>
+    </div>
+
+    <pre><code># JumpEdge 数据结构
+@dataclass
+class JumpEdge:
+    symbol: str = None           # 字符级跳跃符号
+    symbol_next_state: int = None
+    byte: int = None             # 字节级跳跃
+    byte_next_state: int = None</code></pre>
+
+    <h4>OutlinesJumpForwardMap</h4>
+
+    <p><code>OutlinesJumpForwardMap</code> 封装了跳跃表，提供两个核心查询方法：</p>
+    <ul>
+      <li><code>jump_forward_symbol(state)</code>：从 state 开始，沿着单出边状态链前进，返回完整的跳跃字符串和终点状态</li>
+      <li><code>jump_forward_byte(state)</code>：返回字节级跳跃序列，用于处理 UTF-8 continuation bytes</li>
+    </ul>
+
+    <div class="highlight">
+      <strong>UTF-8 处理</strong> &mdash; Outlines 的 byte-level FSM 将多字节字符拆分为多个状态转移。Jump forward 在返回跳跃结果时，需要先处理 continuation bytes（范围 0x80-0xBF），将它们转换为特殊 token（如 <code>&lt;0xE9&gt;</code>），然后通过 tokenizer 转换为 token ID。
+    </div>
+
+    <!-- ============================================================ -->
+    <h2 id="llguidance">6. LLGuidance 后端</h2>
+
+    <h3 id="llg-grammar">6.1 GuidanceGrammar 对象</h3>
+
+    <p>LLGuidance 后端基于 Rust 实现的 <code>llguidance</code> 库，提供高效的语法匹配：</p>
+
+    <div class="card">
+      <h4>核心特点</h4>
+      <ul>
+        <li>使用 <code>LLMatcher</code> 作为匹配器，通过 <code>consume_token()</code> 推进状态</li>
+        <li>Bitmask 方案与 XGrammar 类似，使用 <code>llguidance.torch</code> 提供的分配/填充/应用函数</li>
+        <li>支持 <code>compute_ff_tokens()</code> 实现原生的 fast-forward（jump forward）</li>
+        <li>Bitmask 智能复用：只在 batch 增大时重新分配，避免频繁内存分配</li>
+      </ul>
+    </div>
+
+    <pre><code>class GuidanceGrammar(BaseGrammarObject):
+    def __init__(self, llguidance_tokenizer, serialized_grammar):
+        self.ll_matcher = LLMatcher(
+            llguidance_tokenizer, serialized_grammar,
+            log_level=int(os.environ.get("LLGUIDANCE_LOG_LEVEL", "1"))
+        )
+        self.bitmask = None  # 惰性分配
+
+    def allocate_vocab_mask(self, vocab_size, batch_size, device):
+        if self.bitmask is None or self.bitmask.shape[0] < batch_size:
+            self.bitmask = allocate_token_bitmask(batch_size, self.llguidance_tokenizer.vocab_size)
+        return self.bitmask[:batch_size]  # 复用已分配的内存
+
+    def try_jump_forward(self, tokenizer):
+        ff_tokens = self.ll_matcher.compute_ff_tokens()  # 原生 fast-forward
+        return (ff_tokens, "") if ff_tokens else None</code></pre>
+
+    <h3 id="llg-backend">6.2 GuidanceBackend</h3>
+
+    <p>后端通过 <code>llguidance.hf.from_tokenizer()</code> 初始化 tokenizer，然后将各种约束类型序列化为 llguidance 的内部格式：</p>
+
+    <table>
+      <tr><th>约束类型</th><th>编译方法</th><th>实现</th></tr>
+      <tr><td>JSON Schema</td><td><code>dispatch_json()</code></td><td><code>LLMatcher.grammar_from_json_schema()</code>，支持 <code>whitespace_flexible</code> 和 <code>whitespace_pattern</code></td></tr>
+      <tr><td>Regex</td><td><code>dispatch_regex()</code></td><td><code>grammar_from("regex", key_string)</code></td></tr>
+      <tr><td>EBNF</td><td><code>dispatch_ebnf()</code></td><td><code>grammar_from("ebnf", key_string)</code></td></tr>
+      <tr><td>Structural Tag</td><td><code>dispatch_structural_tag()</code></td><td><code>StructTag.to_grammar(tags)</code>，仅支持 legacy 格式</td></tr>
+    </table>
+
+    <!-- ============================================================ -->
+    <h2 id="reasoner">7. Reasoner Grammar 推理约束</h2>
+
+    <p>Reasoner Grammar 是一个<strong>装饰器模式</strong>的实现，用于支持具有"思考"阶段的模型（如 DeepSeek-R1、Qwen3）在思考结束后才激活语法约束。</p>
+
+    <h3 id="reasoner-object">7.1 ReasonerGrammarObject</h3>
+
+    <div class="mermaid">
+stateDiagram-v2
+    [*] --> Thinking: tokens_after_think_end = -1
+    Thinking --> JustEnded: 遇到 think_end_id
+    JustEnded --> Constrained: tokens_after_think_end = 0
+    Constrained --> Constrained: accept_token 传递给内部 grammar
+    Thinking --> Thinking: accept_token 不传递
+
+    note right of Thinking: 思考阶段\n不应用语法约束
+    note right of Constrained: 约束阶段\n语法完全生效
+    </div>
+
+    <div class="card">
+      <h4>状态追踪</h4>
+      <p><code>tokens_after_think_end</code> 字段追踪思考阶段的状态：</p>
+      <ul>
+        <li><code>-1</code>：仍在思考阶段，语法约束<strong>不生效</strong></li>
+        <li><code>0</code>：刚刚结束思考（上一个 token 是 think_end_id）</li>
+        <li><code>&gt; 0</code>：思考结束后已生成的 token 数，语法约束<strong>完全生效</strong></li>
+      </ul>
+    </div>
+
+    <pre><code>def accept_token(self, token: int):
+    if self.tokens_after_think_end >= 0:
+        self.grammar.accept_token(token)  # 仅在约束阶段传递给内部语法
+    self.transfer_state(token)
+
+def fill_vocab_mask(self, vocab_mask, idx):
+    if self.tokens_after_think_end >= 0:
+        self.grammar.fill_vocab_mask(vocab_mask, idx)  # 仅在约束阶段填充掩码
+
+def rollback(self, k):
+    steps_after_think = min(k, self.tokens_after_think_end)
+    if steps_after_think > 0:
+        self.grammar.rollback(steps_after_think)  # 仅回滚约束阶段的步骤
+    for _ in range(k):
+        self.rollback_state()</code></pre>
+
+    <h3 id="reasoner-backend">7.2 ReasonerGrammarBackend</h3>
+
+    <p>Reasoner 后端是一个纯粹的装饰器，包装任意一个基础 grammar 后端：</p>
+
+    <pre><code>class ReasonerGrammarBackend(BaseGrammarBackend):
+    def __init__(self, grammar_backend, think_end_id):
+        self.grammar_backend = grammar_backend  # 被装饰的基础后端
+        self.think_end_id = think_end_id
+
+    def _init_value_dispatch(self, key, reasoning):
+        ret = self.grammar_backend._init_value_dispatch(key, reasoning)
+        if ret is None or ret is INVALID_GRAMMAR_OBJ:
+            return ret  # 不包装无效语法
+        obj = ReasonerGrammarObject(ret, self.think_end_id)
+        obj.maybe_init_reasoning(reasoning)
+        return obj</code></pre>
+
+    <div class="highlight">
+      <strong>自动激活</strong> &mdash; 在 <code>create_grammar_backend()</code> 中，如果 server 配置了 <code>reasoning_parser</code> 且 tokenizer 有 <code>think_end_id</code>，系统会自动将基础后端（XGrammar/Outlines/LLGuidance）包装为 ReasonerGrammarBackend。用户无需手动配置。
+    </div>
+
+    <!-- ============================================================ -->
+    <h2 id="grammar-manager">8. GrammarManager 异步协调</h2>
+
+    <p><code>GrammarManager</code> 是约束解码子系统与调度器之间的桥梁，负责异步语法编译的全生命周期管理。</p>
+
+    <h3 id="gm-queue">8.1 异步编译队列</h3>
+
+    <div class="mermaid">
+sequenceDiagram
+    participant Scheduler
+    participant GM as GrammarManager
+    participant Backend as GrammarBackend
+    participant TP as ThreadPool
+
+    Scheduler->>GM: process_req_with_grammar(req)
+    GM->>GM: 构造 key = (type, value)
+    GM->>Backend: get_cached_or_future_value(key)
+
+    alt 缓存命中
+        Backend-->>GM: (grammar_obj.copy(), True)
+        GM-->>Scheduler: 立即可用
+    else 缓存未命中
+        Backend->>TP: executor.submit(compile)
+        TP-->>GM: (Future, False)
+        GM->>GM: grammar_queue.append(req)
+        GM-->>Scheduler: 加入等待队列
+    end
+
+    loop 每个调度循环
+        Scheduler->>GM: get_ready_grammar_requests()
+        GM->>GM: 轮询 Future.done()
+        GM->>GM: 同步所有 Rank 的就绪状态
+        GM-->>Scheduler: ready_reqs
+    end
+    </div>
+
+    <h3>8.2 请求处理流程</h3>
+
+    <p><code>process_req_with_grammar()</code> 的决策逻辑：</p>
+
+    <div class="mermaid">
+flowchart TD
+    REQ["收到请求"] --> CHECK{"有约束参数?<br/>json_schema/regex/ebnf/structural_tag"}
+    CHECK -->|No| PASS["直接进入 waiting_queue"]
+    CHECK -->|Yes| BACKEND{"grammar_backend 存在?"}
+    BACKEND -->|No| ERROR["set_finish_with_abort"]
+    BACKEND -->|Yes| KEY["构造 key<br/>(type, value)"]
+    KEY --> CACHED{"缓存命中?"}
+    CACHED -->|Yes| VALID{"grammar 有效?"}
+    VALID -->|Yes| READY["直接可用<br/>grammar = value.copy()"]
+    VALID -->|No| ABORT["cached invalid grammar"]
+    CACHED -->|No| ASYNC["异步编译<br/>grammar = Future"]
+    ASYNC --> QUEUE["加入 grammar_queue"]
+
+    style READY fill:#1c2128,stroke:#3fb950,color:#e6edf3
+    style QUEUE fill:#1c2128,stroke:#e3b341,color:#e6edf3
+    style ERROR fill:#1c2128,stroke:#f85149,color:#e6edf3
+    style ABORT fill:#1c2128,stroke:#f85149,color:#e6edf3
+    </div>
+
+    <h3 id="gm-sync">8.3 多 Rank 同步</h3>
+
+    <p>在张量并行（TP）场景下，多个 Rank 需要对语法编译的就绪状态达成一致：</p>
+
+    <div class="card">
+      <h4>同步协议</h4>
+      <ol>
+        <li>每个 Rank 独立轮询自己的 <code>grammar_queue</code>，收集 <code>ready_req_idxs</code> 和 <code>failed_req_idxs</code></li>
+        <li>通过 <code>torch.distributed.all_gather_object()</code> 收集所有 Rank 的结果</li>
+        <li><strong>就绪集合</strong>：取所有 Rank 的<strong>交集</strong> &mdash; 只有所有 Rank 都就绪的请求才能继续</li>
+        <li><strong>失败集合</strong>：取所有 Rank 的<strong>并集</strong> &mdash; 任何一个 Rank 超时的请求都标记为失败</li>
+      </ol>
+      <pre><code>synced_ready = set.intersection(*[x[0] for x in all_gather_output])
+synced_failed = set.union(*[x[1] for x in all_gather_output])</code></pre>
+    </div>
+
+    <h3>8.4 超时处理</h3>
+
+    <p>语法编译可能因为复杂的 schema 而耗时很长。系统通过计数机制实现超时：</p>
+    <ul>
+      <li>每次轮询未就绪时，<code>grammar_wait_ct += 1</code></li>
+      <li>当 <code>grammar_wait_ct >= SGLANG_GRAMMAR_MAX_POLL_ITERATIONS</code> 时触发超时</li>
+      <li>超时的请求：<code>grammar.cancel()</code>，缓存 <code>INVALID_GRAMMAR_OBJ</code>，向用户返回错误</li>
+      <li>实际等待时间 = <code>MAX_POLL_ITERATIONS * max(POLL_INTERVAL, GPU_forward_latency)</code></li>
+    </ul>
+
+    <!-- ============================================================ -->
+    <h2 id="dispatch">9. 约束类型分发</h2>
+
+    <p>系统支持多种约束类型，统一通过 <code>(key_type, key_string)</code> 元组进行路由：</p>
+
+    <table>
+      <tr><th>约束类型</th><th>key_type</th><th>XGrammar</th><th>Outlines</th><th>LLGuidance</th></tr>
+      <tr><td>JSON Schema</td><td><code>"json"</code></td><td>compile_json_schema / compile_builtin_json_grammar</td><td>build_regex_from_schema -> RegexGuide</td><td>grammar_from_json_schema</td></tr>
+      <tr><td>正则表达式</td><td><code>"regex"</code></td><td>compile_regex</td><td>RegexGuide.from_regex</td><td>grammar_from("regex")</td></tr>
+      <tr><td>EBNF 语法</td><td><code>"ebnf"</code></td><td>compile_grammar</td><td>不支持</td><td>grammar_from("ebnf")</td></tr>
+      <tr><td>Structural Tag</td><td><code>"structural_tag"</code></td><td>compile_structural_tag</td><td>不支持</td><td>StructTag.to_grammar (仅 legacy)</td></tr>
+      <tr><td>$$ANY$$ JSON</td><td><code>"json"</code></td><td>compile_builtin_json_grammar</td><td>通用 JSON regex</td><td>通用 JSON schema</td></tr>
+    </table>
+
+    <div class="warn">
+      <strong>$$ANY$$ 特殊值</strong> &mdash; 当 <code>json_schema</code> 设为字面量 <code>"$$ANY$$"</code> 时，XGrammar 后端使用内置的通用 JSON 语法（接受所有合法 JSON，包括根级数组和基本类型），而非基于特定 schema 的约束。
+    </div>
+
+    <!-- ============================================================ -->
+    <h2 id="comparison">10. 后端对比</h2>
+
+    <table>
+      <tr><th>特性</th><th>XGrammar</th><th>Outlines</th><th>LLGuidance</th></tr>
+      <tr><td><strong>实现语言</strong></td><td>C++</td><td>Python</td><td>Rust</td></tr>
+      <tr><td><strong>掩码类型</strong></td><td>压缩 bitmask</td><td>bool tensor</td><td>压缩 bitmask</td></tr>
+      <tr><td><strong>JSON Schema</strong></td><td>原生编译</td><td>转 regex</td><td>原生编译</td></tr>
+      <tr><td><strong>Regex</strong></td><td>原生编译</td><td>FSM 引导</td><td>原生编译</td></tr>
+      <tr><td><strong>EBNF</strong></td><td>原生编译</td><td>不支持</td><td>原生编译</td></tr>
+      <tr><td><strong>Structural Tag</strong></td><td>legacy + 新格式</td><td>不支持</td><td>仅 legacy</td></tr>
+      <tr><td><strong>Jump Forward</strong></td><td>原生 find_jump_forward_string</td><td>FSM 分析 + JumpForwardMap</td><td>原生 compute_ff_tokens</td></tr>
+      <tr><td><strong>回滚</strong></td><td>max_rollback_tokens=200</td><td>不支持</td><td>不支持</td></tr>
+      <tr><td><strong>掩码应用</strong></td><td>Triton/CUDA kernel</td><td>masked_fill_</td><td>llguidance.torch kernel</td></tr>
+      <tr><td><strong>适用场景</strong></td><td>默认首选，高性能</td><td>兼容性后备</td><td>Rust 生态集成</td></tr>
+    </table>
+
+    <!-- ============================================================ -->
+    <h2 id="summary">11. 总结</h2>
+
+    <h3>11.1 完整约束解码流水线</h3>
+
+    <div class="mermaid">
+flowchart TD
+    REQ["用户请求<br/>json_schema / regex / ebnf"] --> GM["GrammarManager<br/>process_req_with_grammar"]
+    GM --> CACHE_CHECK{"缓存命中?"}
+    CACHE_CHECK -->|Yes| COPY["grammar.copy()"]
+    CACHE_CHECK -->|No| ASYNC["ThreadPool 异步编译"]
+    ASYNC --> POLL["轮询 Future.done()"]
+    POLL --> SYNC["多 Rank all_gather 同步"]
+    SYNC --> READY["grammar 就绪"]
+    COPY --> READY
+
+    READY --> SCHEDULE["进入调度批次"]
+    SCHEDULE --> SBI["SamplingBatchInfo<br/>grammars 列表"]
+
+    SBI --> MASK_ALLOC["allocate_vocab_mask()"]
+    MASK_ALLOC --> MASK_FILL["fill_vocab_mask()<br/>每个 grammar 填充对应行"]
+    MASK_FILL --> MASK_MOVE["move_vocab_mask()<br/>传输到 GPU"]
+    MASK_MOVE --> MASK_APPLY["apply_vocab_mask()<br/>修改 logits"]
+    MASK_APPLY --> SAMPLE["采样 token"]
+
+    SAMPLE --> ACCEPT["grammar.accept_token(token)"]
+    ACCEPT --> JUMP{"try_jump_forward?"}
+    JUMP -->|Yes| JF["跳跃前进 + retokenize"]
+    JUMP -->|No| NEXT["下一步解码"]
+    JF --> NEXT
+
+    NEXT --> TERM{"is_terminated?"}
+    TERM -->|Yes| DONE["约束满足，完成"]
+    TERM -->|No| MASK_ALLOC
+
+    style REQ fill:#1c2128,stroke:#39d0d8,color:#e6edf3
+    style DONE fill:#1c2128,stroke:#3fb950,color:#e6edf3
+    style GM fill:#1c2128,stroke:#58a6ff,color:#e6edf3
+    style SAMPLE fill:#1c2128,stroke:#e3b341,color:#e6edf3
+    </div>
+
+    <h3>11.2 关键文件索引</h3>
+
+    <table>
+      <tr><th>文件</th><th>核心职责</th></tr>
+      <tr><td><code>constrained/base_grammar_backend.py</code></td><td>BaseGrammarObject + BaseGrammarBackend 抽象基类，缓存机制，后端注册</td></tr>
+      <tr><td><code>constrained/grammar_manager.py</code></td><td>GrammarManager 异步协调，编译队列，多 Rank 同步</td></tr>
+      <tr><td><code>constrained/xgrammar_backend.py</code></td><td>XGrammar 后端，bitmask 掩码，Triton/CUDA kernel</td></tr>
+      <tr><td><code>constrained/outlines_backend.py</code></td><td>Outlines 后端，FSM 引导，bool mask</td></tr>
+      <tr><td><code>constrained/llguidance_backend.py</code></td><td>LLGuidance 后端，Rust 匹配器，bitmask</td></tr>
+      <tr><td><code>constrained/outlines_jump_forward.py</code></td><td>Outlines FSM 跳跃前进优化，JumpEdge，JumpForwardMap</td></tr>
+      <tr><td><code>constrained/reasoner_grammar_backend.py</code></td><td>Reasoner 装饰器，思考阶段跳过约束</td></tr>
+      <tr><td><code>constrained/utils.py</code></td><td>工具函数，legacy structural tag 检测</td></tr>
+    </table>
+
+    <h3>11.3 设计亮点</h3>
+
+    <div class="card-grid">
+      <div class="card">
+        <h4>多后端可插拔</h4>
+        <p>统一的 BaseGrammarBackend/BaseGrammarObject 抽象允许无缝切换 XGrammar、Outlines、LLGuidance 后端。注册机制支持第三方扩展。</p>
+      </div>
+      <div class="card">
+        <h4>异步编译不阻塞</h4>
+        <p>语法编译可能耗时数秒（复杂 JSON Schema）。通过 ThreadPool + Future 模式，编译过程不阻塞 GPU 推理。已编译的语法被缓存复用。</p>
+      </div>
+      <div class="card">
+        <h4>Bitmask 高效掩码</h4>
+        <p>XGrammar 和 LLGuidance 使用压缩 bitmask（1 bit/token），配合 Triton/CUDA kernel 原地修改 logits。相比 bool mask 节省 8 倍内存带宽。</p>
+      </div>
+      <div class="card">
+        <h4>Reasoner 装饰器</h4>
+        <p>透明地包装任何后端，使"思考"模型在推理阶段跳过语法约束，结束思考后才激活。自动检测配置，用户无需手动设置。</p>
+      </div>
+      <div class="card">
+        <h4>Jump Forward 加速</h4>
+        <p>通过 FSM 分析预识别确定性路径，跳过多个 token 的逐一生成。XGrammar 和 LLGuidance 提供原生实现，Outlines 通过 JumpForwardMap 实现。</p>
+      </div>
+      <div class="card">
+        <h4>多 Rank 一致性</h4>
+        <p>GrammarManager 通过 all_gather + 交集/并集策略确保分布式环境下所有 Rank 对语法就绪状态达成一致，避免 TP desync。</p>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'dark', themeVariables: { primaryColor: '#1c2128', primaryTextColor: '#e6edf3', lineColor: '#39d0d8', secondaryColor: '#161b22' }});
+
+  // TOC active state
+  const links = document.querySelectorAll('.toc a');
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        const id = e.target.getAttribute('id');
+        const link = document.querySelector(`.toc a[href="#${id}"]`);
+        if (link) link.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-20% 0px -60% 0px' });
+  document.querySelectorAll('h2[id], h3[id]').forEach(el => observer.observe(el));
+</script>
+</body>
+</html>

@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang Entrypoints 服务入口">
+  <meta name="report-type"  content="repo">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang Entrypoints 服务入口">
+  <meta name="report-type"  content="sglang">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+  <title>SGLang Entrypoints 服务入口</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}:root{--bg:#0d1117;--bg2:#161b22;--bg3:#1c2128;--border:#30363d;--text:#e6edf3;--text2:#8b949e;--text3:#656d76;--cyan:#39d0d8;--blue:#58a6ff;--green:#3fb950;--yellow:#e3b341;--orange:#f78166;--purple:#bc8cff;--red:#f85149;--font-mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace}html{scroll-behavior:smooth}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif;background:var(--bg);color:var(--text);line-height:1.75;font-size:16px}.page-wrap{display:grid;grid-template-columns:260px 1fr;min-height:100vh}@media(max-width:900px){.page-wrap{grid-template-columns:1fr}.sidebar{display:none}}.sidebar{position:sticky;top:0;height:100vh;overflow-y:auto;background:var(--bg2);border-right:1px solid var(--border);padding:24px 16px}.sidebar-brand{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:16px}.toc a{display:block;padding:6px 8px;font-size:13px;color:var(--text2);text-decoration:none;border-radius:6px;margin-bottom:2px}.toc a:hover{background:var(--bg3);color:var(--cyan)}.toc .sub{padding-left:16px;font-size:12px}main{max-width:960px;margin:0 auto;padding:48px 32px}h1{font-size:2.2rem;margin-bottom:8px;background:linear-gradient(135deg,var(--cyan),var(--blue));-webkit-background-clip:text;-webkit-text-fill-color:transparent}.subtitle{color:var(--text2);font-size:1rem;margin-bottom:40px}h2{font-size:1.5rem;color:var(--cyan);margin:48px 0 16px;padding-bottom:8px;border-bottom:1px solid var(--border)}h3{font-size:1.15rem;color:var(--blue);margin:32px 0 12px}h4{font-size:1rem;color:var(--purple);margin:24px 0 8px}p,li{color:var(--text);margin-bottom:12px}ul,ol{padding-left:24px}a{color:var(--blue);text-decoration:none}.card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px;margin:16px 0}.card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin:16px 0}.tag{display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600;margin:2px 4px 2px 0}.tag-cyan{background:rgba(57,208,216,0.15);color:var(--cyan)}.tag-green{background:rgba(63,185,80,0.15);color:var(--green)}.tag-yellow{background:rgba(227,179,65,0.15);color:var(--yellow)}.tag-orange{background:rgba(247,129,102,0.15);color:var(--orange)}.tag-purple{background:rgba(188,140,255,0.15);color:var(--purple)}table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px}th,td{padding:10px 14px;text-align:left;border:1px solid var(--border)}th{background:var(--bg3);color:var(--cyan);font-weight:600}td{background:var(--bg2)}code{font-family:var(--font-mono);background:var(--bg3);padding:2px 6px;border-radius:4px;font-size:0.9em;color:var(--orange)}pre{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:16px;overflow-x:auto;margin:16px 0;font-size:13px;line-height:1.6}pre code{background:none;padding:0;color:var(--text)}.mermaid{background:var(--bg2);border-radius:12px;padding:20px;margin:16px 0;display:flex;justify-content:center}.highlight{background:rgba(57,208,216,0.08);border-left:3px solid var(--cyan);padding:16px 20px;border-radius:0 8px 8px 0;margin:16px 0}
+  </style>
+</head>
+<body>
+<div class="page-wrap">
+  <nav class="sidebar">
+    <div class="sidebar-brand">SGLang Research</div>
+    <div class="toc">
+      <a href="00-SGLang-整体设计综述.html">&#8592; 返回综述</a>
+      <a href="#overview">服务入口概述</a>
+      <a href="#engine">Engine Python API</a>
+      <a href="#http">HTTP Server</a>
+      <a href="#openai">OpenAI 兼容 API</a>
+      <a href="#anthropic">Anthropic 兼容</a>
+      <a href="#ollama">Ollama 兼容</a>
+      <a href="#grpc">gRPC Server</a>
+      <a href="#native">SGLang 原生 API</a>
+      <a href="#warmup">Warmup 预热</a>
+    </div>
+  </nav>
+  <main>
+    <h1>15 - Entrypoints 服务入口</h1>
+    <p class="subtitle">SGLang HTTP/gRPC 服务、Engine API 与多协议兼容层</p>
+
+    <h2 id="overview">1. 服务入口概述</h2>
+    <p>SGLang 提供了多种服务入口方式，位于 <code>srt/entrypoints/</code>：</p>
+
+    <div class="mermaid">
+flowchart TB
+    subgraph Entries["服务入口"]
+        E1["Engine Python API<br/>engine.py"]
+        E2["HTTP Server<br/>http_server.py"]
+        E3["gRPC Server<br/>grpc_server.py"]
+    end
+
+    subgraph API["API 协议层"]
+        A1["OpenAI Compatible<br/>openai/"]
+        A2["Anthropic Compatible<br/>anthropic/"]
+        A3["Ollama Compatible<br/>ollama/"]
+        A4["SGLang Native<br/>/generate"]
+    end
+
+    subgraph Core["SRT Engine Core"]
+        C1["TokenizerManager"]
+        C2["Scheduler"]
+        C3["ModelRunner"]
+    end
+
+    E1 --> C1
+    E2 --> A1 --> C1
+    E2 --> A2 --> C1
+    E2 --> A3 --> C1
+    E2 --> A4 --> C1
+    E3 --> C1
+    C1 --> C2 --> C3
+    </div>
+
+    <h2 id="engine">2. Engine Python API</h2>
+
+    <p><code>engine.py</code> 提供了 Python 嵌入式引擎接口，无需启动 HTTP 服务：</p>
+
+    <div class="card">
+      <h4>Engine 使用方式</h4>
+      <pre><code>import sglang as sgl
+
+engine = sgl.Engine(model_path="meta-llama/Llama-3-8B-Instruct")
+
+# 同步生成
+output = engine.generate(
+    prompt="Hello, how are you?",
+    sampling_params={"temperature": 0.8, "max_new_tokens": 256}
+)
+
+# 异步生成
+async for chunk in engine.async_generate(...):
+    print(chunk)
+
+engine.shutdown()</code></pre>
+    </div>
+
+    <p>Engine 类的核心方法：</p>
+    <table>
+      <tr><th>方法</th><th>说明</th></tr>
+      <tr><td><code>generate()</code></td><td>同步文本生成</td></tr>
+      <tr><td><code>async_generate()</code></td><td>异步文本生成 (支持流式)</td></tr>
+      <tr><td><code>encode()</code></td><td>文本编码为 embedding</td></tr>
+      <tr><td><code>classify()</code></td><td>文本分类</td></tr>
+      <tr><td><code>update_weights_from_disk()</code></td><td>从磁盘热更新权重</td></tr>
+      <tr><td><code>update_weights_from_tensor()</code></td><td>从 Tensor 热更新权重</td></tr>
+      <tr><td><code>load_lora_adapter()</code></td><td>加载 LoRA 适配器</td></tr>
+      <tr><td><code>shutdown()</code></td><td>关闭引擎</td></tr>
+    </table>
+
+    <h2 id="http">3. HTTP Server</h2>
+
+    <p><code>http_server.py</code> 基于 FastAPI 实现 HTTP 服务：</p>
+
+    <div class="mermaid">
+flowchart TD
+    A["FastAPI App"] --> B["/generate - SGLang 原生"]
+    A --> C["/v1/chat/completions - OpenAI Chat"]
+    A --> D["/v1/completions - OpenAI Completion"]
+    A --> E["/v1/embeddings - OpenAI Embedding"]
+    A --> F["/v1/messages - Anthropic"]
+    A --> G["/api/generate - Ollama"]
+    A --> H["/health - 健康检查"]
+    A --> I["/get_model_info - 模型信息"]
+    A --> J["/flush_cache - 清理缓存"]
+    A --> K["/update_weights - 权重更新"]
+    A --> L["/v1/files - 文件管理"]
+    </div>
+
+    <h3>3.1 Server 启动流程</h3>
+    <pre><code># launch_server.py
+def launch_server(server_args):
+    # 1. 启动子进程 (Scheduler, Detokenizer)
+    tokenizer_manager, template_manager, scheduler_infos = _launch_subprocesses(...)
+
+    # 2. 设置全局状态
+    set_global_state(GlobalState(tokenizer_manager, template_manager, ...))
+
+    # 3. 启动 FastAPI HTTP Server
+    uvicorn.run(app, host=host, port=port)</code></pre>
+
+    <h2 id="openai">4. OpenAI 兼容 API</h2>
+
+    <p><code>entrypoints/openai/</code> 实现了完整的 OpenAI API 兼容层：</p>
+
+    <table>
+      <tr><th>文件</th><th>API 端点</th><th>说明</th></tr>
+      <tr><td><code>serving_chat.py</code></td><td><code>/v1/chat/completions</code></td><td>Chat Completion API（含 streaming）</td></tr>
+      <tr><td><code>serving_completions.py</code></td><td><code>/v1/completions</code></td><td>Text Completion API</td></tr>
+      <tr><td><code>serving_embedding.py</code></td><td><code>/v1/embeddings</code></td><td>Embedding API</td></tr>
+      <tr><td><code>serving_classify.py</code></td><td><code>/v1/classify</code></td><td>分类 API</td></tr>
+      <tr><td><code>serving_rerank.py</code></td><td><code>/v1/rerank</code></td><td>重排序 API</td></tr>
+      <tr><td><code>serving_score.py</code></td><td><code>/v1/score</code></td><td>评分 API</td></tr>
+      <tr><td><code>serving_responses.py</code></td><td><code>/v1/responses</code></td><td>OpenAI Responses API</td></tr>
+      <tr><td><code>serving_tokenize.py</code></td><td><code>/v1/tokenize</code></td><td>分词 API</td></tr>
+      <tr><td><code>protocol.py</code></td><td>-</td><td>请求/响应协议定义</td></tr>
+    </table>
+
+    <h3>4.1 Chat Completion 处理流程</h3>
+
+    <div class="mermaid">
+sequenceDiagram
+    participant C as Client
+    participant H as HTTP Handler
+    participant SC as ServingChat
+    participant TM as TokenizerManager
+
+    C->>H: POST /v1/chat/completions
+    H->>SC: handle_request(request)
+    SC->>SC: validate_request()
+    SC->>SC: apply_chat_template()
+    SC->>TM: generate_request(prompt, params)
+
+    alt Streaming
+        loop SSE Events
+            TM-->>SC: token chunk
+            SC-->>H: ChatCompletionStreamResponse
+            H-->>C: data: {...}\n\n
+        end
+        H-->>C: data: [DONE]\n\n
+    else Non-Streaming
+        TM-->>SC: full response
+        SC-->>H: ChatCompletionResponse
+        H-->>C: JSON Response
+    end
+    </div>
+
+    <h2 id="anthropic">5. Anthropic 兼容</h2>
+    <p><code>entrypoints/anthropic/</code> 实现了 Anthropic Messages API (<code>/v1/messages</code>) 兼容，支持 Anthropic SDK 直接接入。</p>
+
+    <h2 id="ollama">6. Ollama 兼容</h2>
+    <p><code>entrypoints/ollama/</code> 实现了 Ollama API 兼容，支持 <code>/api/generate</code> 和 <code>/api/chat</code> 端点，方便从 Ollama 迁移。</p>
+
+    <h2 id="grpc">7. gRPC Server</h2>
+    <p><code>grpc_server.py</code> 和 <code>srt/grpc/</code> 提供了 gRPC 服务接口，使用 protobuf 定义的 <code>sglang_scheduler.proto</code>，适用于高性能 RPC 场景。</p>
+
+    <h2 id="native">8. SGLang 原生 API</h2>
+    <p>SGLang 原生 <code>/generate</code> 端点支持更多高级功能：</p>
+    <ul>
+      <li><code>regex</code> - 正则约束解码</li>
+      <li><code>json_schema</code> - JSON Schema 约束</li>
+      <li><code>return_logprob</code> - 返回 logprob</li>
+      <li><code>session_id</code> - 会话管理</li>
+      <li><code>input_ids</code> - 直接传入 token IDs</li>
+      <li><code>lora_path</code> - 指定 LoRA 适配器</li>
+    </ul>
+
+    <h2 id="warmup">9. Warmup 预热</h2>
+    <p><code>warmup.py</code> 在服务启动后执行预热请求，触发 CUDA Graph 捕获和 JIT 编译，确保首次请求的延迟正常。</p>
+  </main>
+</div>
+<script>mermaid.initialize({startOnLoad:true,theme:'dark'});</script>
+</body>
+</html>

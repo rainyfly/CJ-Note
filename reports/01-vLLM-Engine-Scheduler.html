@@ -1,0 +1,1038 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>vLLM Engine 层与 Scheduler 深度解析 — CJ-Note</title>
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="vLLM Engine 层与 Scheduler 深度解析">
+  <meta name="report-type"  content="repo">
+  <meta name="report-date"  content="2026-04-10">
+  <meta name="report-tags"  content="vllm, framework">
+  <meta name="report-desc"  content="LLMEngine/AsyncLLM/EngineCore 前后端进程分离架构、ZMQ IPC 通信、Scheduler 调度流程与 Chunked Prefill 详解">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #0d1117; --surface: #161b22; --border: #30363d;
+      --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+      --green: #3fb950; --yellow: #d29922; --red: #f85149;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font-sans);
+           line-height: 1.7; padding: 0 1rem; }
+    .page-wrap { max-width: 900px; margin: 0 auto; padding: 2rem 0 4rem; }
+
+    /* Header */
+    .report-header { border-bottom: 1px solid var(--border); padding-bottom: 1.5rem; margin-bottom: 2rem; }
+    .report-header h1 { font-size: 1.9rem; color: var(--accent); margin-bottom: .5rem; }
+    .meta { color: var(--muted); font-size: .85rem; display: flex; gap: 1.5rem; flex-wrap: wrap; }
+    .meta span::before { content: "• "; }
+    .meta span:first-child::before { content: ""; }
+    .back-link { display: inline-block; margin-bottom: 1rem; color: var(--muted);
+                 text-decoration: none; font-size: .85rem; }
+    .back-link:hover { color: var(--accent); }
+
+    /* Sections */
+    h2 { font-size: 1.3rem; color: var(--text); margin: 2.5rem 0 .8rem;
+         padding-bottom: .4rem; border-bottom: 1px solid var(--border); }
+    h3 { font-size: 1.05rem; color: var(--accent); margin: 1.5rem 0 .5rem; }
+    h4 { font-size: .95rem; color: var(--muted); margin: 1rem 0 .3rem; text-transform: uppercase;
+         letter-spacing: .05em; }
+    p { margin-bottom: 1rem; color: var(--text); }
+
+    /* TL;DR box */
+    .tldr { background: var(--surface); border: 1px solid var(--accent);
+            border-left: 4px solid var(--accent); border-radius: 6px;
+            padding: 1rem 1.2rem; margin: 1.5rem 0; }
+    .tldr h3 { color: var(--accent); margin: 0 0 .5rem; font-size: .9rem;
+               text-transform: uppercase; letter-spacing: .1em; }
+    .tldr ul { padding-left: 1.2rem; }
+    .tldr li { margin-bottom: .3rem; }
+
+    /* Key-value info grid */
+    .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                 gap: .75rem; margin: 1rem 0 1.5rem; }
+    .info-card { background: var(--surface); border: 1px solid var(--border);
+                 border-radius: 6px; padding: .8rem 1rem; }
+    .info-card .label { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em;
+                        color: var(--muted); margin-bottom: .3rem; }
+    .info-card .value { font-size: 1.1rem; font-weight: 600; color: var(--accent);
+                        font-family: var(--font-mono); }
+
+    /* Code blocks */
+    pre { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+          padding: 1rem 1.2rem; overflow-x: auto; margin: 1rem 0; font-size: .85rem;
+          font-family: var(--font-mono); line-height: 1.5; }
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 3px;
+           padding: .15em .4em; font-size: .85em; font-family: var(--font-mono); }
+    pre code { background: none; border: none; padding: 0; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .9rem; }
+    th { background: var(--surface); color: var(--muted); font-weight: 600; text-align: left;
+         padding: .6rem .8rem; border: 1px solid var(--border); font-size: .8rem;
+         text-transform: uppercase; letter-spacing: .04em; }
+    td { padding: .6rem .8rem; border: 1px solid var(--border); vertical-align: top; }
+    tr:nth-child(even) td { background: rgba(255,255,255,.02); }
+
+    /* Chart containers */
+    .chart-wrap { background: var(--surface); border: 1px solid var(--border);
+                  border-radius: 8px; padding: 1.2rem; margin: 1.2rem 0; }
+    .chart-wrap h4 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+                     letter-spacing: .05em; margin-bottom: .8rem; }
+    .chart-wrap canvas { max-height: 320px; }
+
+    /* Mermaid diagrams */
+    .diagram-wrap { background: var(--surface); border: 1px solid var(--border);
+                    border-radius: 8px; padding: 1.5rem; margin: 1.2rem 0;
+                    overflow-x: auto; text-align: center; }
+    .diagram-wrap h4 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+                       letter-spacing: .05em; margin-bottom: 1rem; text-align: left; }
+
+    /* Callout boxes */
+    .callout { border-radius: 6px; padding: .8rem 1rem; margin: 1rem 0;
+               border-left: 4px solid; }
+    .callout.note { background: rgba(88,166,255,.07); border-color: var(--accent); }
+    .callout.tip  { background: rgba(63,185,80,.07);  border-color: var(--green); }
+    .callout.warn { background: rgba(210,153,34,.07); border-color: var(--yellow); }
+    .callout.key  { background: rgba(248,81,73,.07);  border-color: var(--red); }
+    .callout strong { display: block; margin-bottom: .3rem; font-size: .85rem;
+                      text-transform: uppercase; letter-spacing: .04em; }
+
+    /* Reference list */
+    .refs ol { padding-left: 1.5rem; }
+    .refs li { margin-bottom: .5rem; font-size: .9rem; color: var(--muted); }
+    .refs a { color: var(--accent); }
+
+    /* TOC */
+    .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+           padding: 1rem 1.2rem; margin: 0 0 2rem; font-size: .9rem; }
+    .toc h3 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+              letter-spacing: .1em; margin-bottom: .6rem; }
+    .toc ol { padding-left: 1.3rem; }
+    .toc li { margin-bottom: .25rem; }
+    .toc a { color: var(--muted); text-decoration: none; }
+    .toc a:hover { color: var(--accent); }
+
+    /* Footer */
+    .report-footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border);
+                     color: var(--muted); font-size: .8rem; display: flex; justify-content: space-between; }
+
+    ul { padding-left: 1.4rem; margin-bottom: 1rem; }
+    li { margin-bottom: .3rem; }
+    ol { padding-left: 1.4rem; margin-bottom: 1rem; }
+  </style>
+</head>
+<body>
+<div class="page-wrap">
+
+  <a href="../index.html" class="back-link">← Back to CJ-Note</a>
+
+  <header class="report-header">
+    <h1>vLLM Engine 层与 Scheduler 深度解析</h1>
+    <div class="meta">
+      <span>TYPE: REPO ANALYSIS</span>
+      <span>DATE: 2026-04-10</span>
+      <span>基于 vLLM v1 架构</span>
+    </div>
+  </header>
+
+  <!-- TL;DR -->
+  <div class="tldr">
+    <h3>TL;DR</h3>
+    <ul>
+      <li>vLLM v1 将前端（Tokenize/Detokenize）与后端（GPU 推理）分离到独立进程，通过 ZMQ + msgpack 通信，绕过 GIL 实现真正的 CPU/GPU 并行。</li>
+      <li><code>LLMEngine</code>（同步）和 <code>AsyncLLM</code>（异步）共享同一套 <code>EngineCoreClient</code> 抽象，后者用每请求 <code>asyncio.Queue</code> 实现流式并发输出。</li>
+      <li><code>EngineCore</code> 的 <code>step()</code> 在等待 GPU 结果时同步编译结构化输出的语法 bitmask，将两者执行时间重叠，降低额外延迟。</li>
+      <li>调度器用单一整数 <code>num_computed_tokens</code> 替代传统 Prefill/Decode 两阶段状态，Chunked Prefill、推测解码、APC 前缀命中均自然统一在这一模型下。</li>
+      <li>Chunked Prefill（默认 chunk_size ≤ 16384 tokens）将长 Prefill 与 Decode 请求混合调度，显著降低 TTFT 抖动并稳定 TPOT。</li>
+    </ul>
+  </div>
+
+  <!-- Table of Contents -->
+  <nav class="toc">
+    <h3>Contents</h3>
+    <ol>
+      <li><a href="#engine-overview">1. Engine 层概述</a></li>
+      <li><a href="#llm-engine">2. LLMEngine（同步引擎）</a></li>
+      <li><a href="#async-llm">3. AsyncLLM（异步引擎）</a></li>
+      <li><a href="#engine-core">4. EngineCore（推理内核）</a></li>
+      <li><a href="#engine-core-client">5. EngineCoreClient（IPC 抽象）</a></li>
+      <li><a href="#io-processor">6. InputProcessor / OutputProcessor</a></li>
+      <li><a href="#scheduler">7. Scheduler（调度器）</a></li>
+      <li><a href="#data-structures">8. 关键数据结构</a></li>
+      <li><a href="#sequence-diagrams">9. 完整时序图</a></li>
+      <li><a href="#design-decisions">10. 关键设计决策</a></li>
+    </ol>
+  </nav>
+
+  <!-- ── 1. Engine 层概述 ──────────────────────────── -->
+  <section id="engine-overview">
+    <h2>1. Engine 层概述</h2>
+    <p>vLLM v1 的 Engine 层采用<strong>前后端进程分离</strong>架构：</p>
+
+    <div class="diagram-wrap">
+      <h4>Engine 层整体架构（前后端进程分离）</h4>
+      <div class="mermaid">
+graph TD
+    subgraph Frontend["前端进程 (Frontend)"]
+        LLMEngine["LLMEngine\n(同步批推理)"]
+        AsyncLLM["AsyncLLM\n(异步流式推理)"]
+        OpenAI["OpenAI API Server"]
+        InputProc["InputProcessor\n• Tokenize\n• 多模态预处理"]
+        OutputProc["OutputProcessor\n• Detokenize\n• 停止条件检测"]
+        ECClient["EngineCoreClient\n(ZMQ PUSH → / ← ZMQ PULL)"]
+        LLMEngine --> InputProc
+        AsyncLLM --> InputProc
+        OpenAI --> InputProc
+        InputProc --> ECClient
+        ECClient --> OutputProc
+    end
+    subgraph Backend["后端进程 (EngineCore)"]
+        EC["EngineCore\nScheduler + KVCacheManager\n+ Executor + StructuredOutput"]
+    end
+    ECClient -- "ZMQ ipc:// / tcp://\nmsgpack 序列化" --> EC
+    EC -- "EngineCoreOutputs" --> ECClient
+      </div>
+    </div>
+
+    <p><strong>设计动机</strong>：</p>
+    <ul>
+      <li>CPU 密集的 Tokenize/Detokenize（前端）与 GPU 推理（后端）<strong>真正并行</strong>，绕过 GIL</li>
+      <li>进程隔离提升稳定性（Worker Crash 不影响 API Server）</li>
+      <li>ZMQ 通信延迟极低（&lt; 1 μs IPC），msgpack 序列化比 pickle 快 5–10×</li>
+    </ul>
+  </section>
+
+  <!-- ── 2. LLMEngine ──────────────────────────── -->
+  <section id="llm-engine">
+    <h2>2. LLMEngine（同步引擎）</h2>
+    <p><strong>文件</strong>：<code>vllm/v1/engine/llm_engine.py</code></p>
+
+    <h3>2.1 职责</h3>
+    <p><code>LLMEngine</code> 是离线批量推理的前端引擎，被 <code>LLM</code> 类内部使用。</p>
+
+    <h3>2.2 初始化流程</h3>
+    <pre><code>LLMEngine.__init__(vllm_config)
+          │
+          ├── 1. InputPreprocessor(vllm_config)
+          │      ├── TokenizerGroup (tokenizer pool)
+          │      └── MultiModalProcessor（多模态）
+          │
+          ├── 2. EngineCoreClient(vllm_config)
+          │      ├── 单进程: InprocClient（直接调用）
+          │      └── 多进程: MPClient（ZMQ 通信）
+          │           └── 启动 EngineCore 子进程
+          │
+          └── 3. OutputProcessor(vllm_config)
+                 ├── Detokenizer (增量 detokenize)
+                 └── StopChecker (停止条件)</code></pre>
+
+    <h3>2.3 核心方法</h3>
+    <h4>add_request()</h4>
+    <pre><code class="language-python">def add_request(
+    self,
+    request_id: str,
+    prompt: PromptType,
+    params: SamplingParams | PoolingParams,
+    arrival_time: float | None = None,
+) -> None:
+    # 1. InputPreprocessor → EngineCoreRequest
+    engine_core_request = self.input_preprocessor.process_inputs(
+        request_id, prompt, params, arrival_time
+    )
+    # 2. 发送给 EngineCore
+    self.engine_core.add_request(engine_core_request)</code></pre>
+
+    <h4>step()</h4>
+    <pre><code class="language-python">def step(self) -> list[RequestOutput]:
+    # 1. 从 EngineCore 拉取最新输出
+    engine_core_outputs = self.engine_core.get_output()
+
+    # 2. 处理输出（detokenize + 停止检测）
+    request_outputs, requests_to_abort = \
+        self.output_processor.process_outputs(engine_core_outputs)
+
+    # 3. 中止已完成的请求
+    self.engine_core.abort_requests(requests_to_abort)
+
+    return request_outputs</code></pre>
+
+    <h3>2.4 流程图</h3>
+    <div class="diagram-wrap">
+      <h4>LLMEngine 工作流程</h4>
+      <div class="mermaid">
+graph TD
+    A["用户调用 llm.generate(prompts, params)"] --> B["for prompt in prompts:\nadd_request(request_id, prompt, params)"]
+    B --> C["InputPreprocessor.process_inputs()\n• tokenize(prompt) → token_ids\n• 多模态特征提取（如有）\n→ EngineCoreRequest"]
+    C --> D["EngineCoreClient.add_request(req)\n└── ZMQ PUSH → EngineCore"]
+    D --> E{"while 未完成"}
+    E --> F["step()"]
+    F --> G["EngineCoreClient.get_output()\n← ZMQ PULL"]
+    G --> H["OutputProcessor.process_outputs()\n• Detokenizer.detokenize()\n• StopChecker.check()\n→ list[RequestOutput]"]
+    H --> I{"有完成请求?"}
+    I -- 是 --> J["abort_requests()"]
+    I -- 否 --> E
+    J --> E
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 3. AsyncLLM ──────────────────────────── -->
+  <section id="async-llm">
+    <h2>3. AsyncLLM（异步引擎）</h2>
+    <p><strong>文件</strong>：<code>vllm/v1/engine/async_llm.py</code></p>
+
+    <h3>3.1 职责</h3>
+    <p><code>AsyncLLM</code> 是在线服务场景的异步前端，被 OpenAI API Server 使用，支持并发请求和流式输出。</p>
+
+    <h3>3.2 核心设计</h3>
+    <pre><code class="language-python">class AsyncLLM:
+    # 每个请求有独立的 asyncio.Queue
+    _request_outputs: dict[str, asyncio.Queue[RequestOutput | Exception]]
+
+    # 后台 asyncio Task，持续从 EngineCore 拉取输出
+    _background_loop: asyncio.Task</code></pre>
+
+    <h3>3.3 核心方法</h3>
+    <h4>generate()</h4>
+    <pre><code class="language-python">async def generate(
+    self,
+    request_id: str,
+    inputs: PromptType,
+    params: SamplingParams,
+    ...
+) -> AsyncGenerator[RequestOutput, None]:
+    # 1. 预处理
+    engine_core_request = await self.input_preprocessor.process_inputs(...)
+
+    # 2. 创建输出队列
+    queue: asyncio.Queue = asyncio.Queue(maxsize=queue_size)
+    self._request_outputs[request_id] = queue
+
+    # 3. 发送给 EngineCore
+    await self.engine_core.add_request(engine_core_request)
+
+    # 4. 流式返回输出
+    try:
+        while True:
+            output = await queue.get()
+            if isinstance(output, Exception):
+                raise output
+            yield output
+            if output.finished:
+                break
+    finally:
+        # 清理
+        del self._request_outputs[request_id]</code></pre>
+
+    <h4>后台循环（_run_output_handler）</h4>
+    <pre><code class="language-python">async def _run_output_handler(self):
+    """后台 asyncio Task，持续处理 EngineCore 输出"""
+    async for engine_core_outputs in self.engine_core.get_output_async():
+        # 处理 outputs
+        request_outputs = self.output_processor.process_outputs(
+            engine_core_outputs
+        )
+        # 分发到各请求的 Queue
+        for req_output in request_outputs:
+            queue = self._request_outputs.get(req_output.request_id)
+            if queue:
+                await queue.put(req_output)</code></pre>
+
+    <h3>3.4 并发请求时序图</h3>
+    <div class="diagram-wrap">
+      <h4>AsyncLLM 并发请求处理时序</h4>
+      <div class="mermaid">
+sequenceDiagram
+    participant API as API Server
+    participant AL as AsyncLLM.generate
+    participant BG as _run_output_handler
+    participant EC as EngineCore
+
+    API->>AL: generate(req_A)
+    AL->>EC: add_request(req_A) via ZMQ PUSH
+    Note over AL: create Queue_A
+
+    API->>AL: generate(req_B)
+    AL->>EC: add_request(req_B) via ZMQ PUSH
+    Note over AL: create Queue_B
+
+    loop busy loop
+        EC->>BG: EngineCoreOutputs via ZMQ PULL
+        BG->>BG: process_outputs()
+        BG->>AL: put(Queue_A, output_A_x)
+        BG->>AL: put(Queue_B, output_B_x)
+    end
+
+    AL->>API: yield output_A_1
+    AL->>API: yield output_A_2
+    AL->>API: yield output_A_N (finished=True)
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 4. EngineCore ──────────────────────────── -->
+  <section id="engine-core">
+    <h2>4. EngineCore（推理内核）</h2>
+    <p><strong>文件</strong>：<code>vllm/v1/engine/core.py</code></p>
+
+    <h3>4.1 职责</h3>
+    <p><code>EngineCore</code> 是真正的推理执行核心，运行在<strong>独立进程</strong>中（或同进程单步调用）。</p>
+    <p><strong>组件</strong>：</p>
+    <ul>
+      <li><code>Scheduler</code>：决定哪些请求在本步执行</li>
+      <li><code>KVCacheManager</code>：分配/回收 KV 块</li>
+      <li><code>Executor</code>：调度 Worker 进程执行模型</li>
+      <li><code>StructuredOutputManager</code>：结构化输出语法编译</li>
+    </ul>
+
+    <h3>4.2 核心 step() 方法</h3>
+    <pre><code class="language-python">def step(self) -> list[EngineCoreOutput]:
+    """单步推理循环"""
+
+    # 1. 调度：决定本步执行哪些 token
+    scheduler_output = self.scheduler.schedule()
+
+    if scheduler_output.total_num_scheduled_tokens == 0:
+        return []  # 无可调度请求，空转
+
+    # 2. 异步提交模型执行（non_block=True 立即返回 Future）
+    future = self.executor.execute_model(
+        scheduler_output, non_block=True
+    )
+
+    # 3. 并行获取结构化输出的语法 bitmask（与 GPU 执行重叠）
+    grammar_output = self.scheduler.get_grammar_bitmask(scheduler_output)
+
+    # 4. 等待 GPU 执行完成
+    model_output: ModelRunnerOutput = future.result()
+
+    # 5. 更新调度器状态（消费采样结果，检查停止条件）
+    outputs = self.scheduler.update_from_outputs(
+        scheduler_output, model_output, grammar_output
+    )
+
+    return outputs</code></pre>
+
+    <div class="callout tip">
+      <strong>关键优化</strong>
+      <code>execute_model(non_block=True)</code> 立即返回 Future，GPU 在后台执行的同时，CPU 并发编译语法约束 bitmask（可能耗时数毫秒）。<code>future.result()</code> 等待 GPU 完成时，bitmask 通常已就绪，实现零额外等待。
+    </div>
+
+    <h3>4.3 进程模式</h3>
+    <h4>同进程模式（单 GPU）</h4>
+    <pre><code class="language-python">class InprocClient(EngineCoreClientBase):
+    """直接调用 EngineCore，无 IPC 开销"""
+    def __init__(self, vllm_config):
+        self.engine_core = EngineCore(vllm_config, executor_class=...)
+
+    def add_request(self, request):
+        self.engine_core.add_request(request)
+
+    def get_output(self) -> list[EngineCoreOutput]:
+        return self.engine_core.step()</code></pre>
+
+    <h4>独立进程模式（多 GPU 或提高并行性）</h4>
+    <pre><code class="language-python">class BackgroundEngineCoreProcess:
+    """在子进程中运行 EngineCore 的 busy loop"""
+
+    def run_busy_loop(self):
+        """子进程入口"""
+        self.engine_core = EngineCore(...)
+
+        while True:
+            # 处理新请求（来自 ZMQ）
+            self._handle_pending_requests()
+
+            # 执行一步
+            outputs = self.engine_core.step()
+
+            # 发送输出（ZMQ PUSH）
+            if outputs:
+                self._send_outputs(outputs)</code></pre>
+
+    <h3>4.4 EngineCore 初始化流程</h3>
+    <pre><code>EngineCore.__init__(vllm_config, executor_class)
+       │
+       ├── 1. executor = executor_class(vllm_config)
+       │      └── 启动 Worker 进程群
+       │          ├── Worker.init_device()
+       │          ├── Worker.load_model()
+       │          └── Worker.init_kv_caches()
+       │              └── 返回 num_gpu_blocks
+       │
+       ├── 2. kv_cache_configs = executor.get_kv_cache_configs()
+       │      └── 各层的 KV Cache 规格（head数、维度等）
+       │
+       ├── 3. scheduler = Scheduler(vllm_config, kv_cache_configs)
+       │      └── KVCacheManager.__init__(kv_cache_configs, num_gpu_blocks)
+       │
+       └── 4. structured_output_manager = StructuredOutputManager(...)</code></pre>
+  </section>
+
+  <!-- ── 5. EngineCoreClient ──────────────────────────── -->
+  <section id="engine-core-client">
+    <h2>5. EngineCoreClient（IPC 抽象）</h2>
+    <p><strong>文件</strong>：<code>vllm/v1/engine/core_client.py</code></p>
+
+    <h3>5.1 抽象接口</h3>
+    <pre><code class="language-python">class EngineCoreClientBase(ABC):
+    @abstractmethod
+    def add_request(self, request: EngineCoreRequest) -> None: ...
+
+    @abstractmethod
+    def abort_requests(self, request_ids: list[str]) -> None: ...
+
+    @abstractmethod
+    def get_output(self) -> list[EngineCoreOutput]: ...</code></pre>
+
+    <h3>5.2 实现类</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>类</th>
+          <th>场景</th>
+          <th>通信方式</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>InprocClient</code></td>
+          <td>单进程（调试/小规模）</td>
+          <td>直接 Python 调用</td>
+        </tr>
+        <tr>
+          <td><code>SyncMPClient</code></td>
+          <td>多进程同步（LLMEngine）</td>
+          <td>ZMQ PUSH/PULL</td>
+        </tr>
+        <tr>
+          <td><code>AsyncMPClient</code></td>
+          <td>多进程异步（AsyncLLM）</td>
+          <td>ZMQ + asyncio</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>5.3 ZMQ 通信协议</h3>
+    <pre><code>前端进程                              后端进程 (EngineCore)
+    │                                       │
+    │  ADD_REQUEST                          │
+    │  ─────────ZMQ PUSH(ipc)─────────────►│
+    │  [EngineCoreRequest(msgpack)]         │
+    │                                       │
+    │  ABORT_REQUESTS                       │
+    │  ─────────ZMQ PUSH(ipc)─────────────►│
+    │  [list[request_id]]                   │
+    │                                       │
+    │           ◄──ZMQ PULL(ipc)────────── │
+    │  [EngineCoreOutputs(msgpack)]         │
+    │  {outputs: list[EngineCoreOutput],    │
+    │   scheduler_stats: SchedulerStats}    │
+    │                                       │</code></pre>
+
+    <p><strong>消息格式</strong>（msgspec.Struct）：</p>
+    <pre><code class="language-python">class EngineCoreRequest(msgspec.Struct):
+    request_id: str
+    prompt_token_ids: list[int]
+    mm_inputs: list[MultiModalKwargs] | None
+    mm_hashes: list[str] | None
+    sampling_params: SamplingParams
+    arrival_time: float
+    lora_request: LoRARequest | None = None
+
+class EngineCoreOutput(msgspec.Struct):
+    request_id: str
+    new_token_ids: list[int]
+    finish_reason: FinishReason | None = None
+    stop_reason: int | str | None = None
+    logprobs: LogprobsLists | None = None</code></pre>
+  </section>
+
+  <!-- ── 6. InputProcessor / OutputProcessor ──────────────────────────── -->
+  <section id="io-processor">
+    <h2>6. InputProcessor / OutputProcessor</h2>
+
+    <h3>6.1 InputProcessor</h3>
+    <p><strong>文件</strong>：<code>vllm/v1/engine/input_processor.py</code></p>
+    <pre><code>InputPreprocessor.process_inputs(request_id, prompt, params)
+       │
+       ├── 1. 解析 prompt 类型
+       │      ├── str → tokenize
+       │      ├── list[Message] → apply_chat_template → tokenize
+       │      └── TokensPrompt → 直接使用 token_ids
+       │
+       ├── 2. 多模态处理（如有图像/音频）
+       │      └── MultiModalProcessor.process()
+       │          ├── 提取特征（ViT 前处理）
+       │          ├── 计算 mm_hash（用于 APC）
+       │          └── 生成 mm_position（特征插入位置）
+       │
+       └── 3. 构建 EngineCoreRequest
+              ├── prompt_token_ids
+              ├── mm_inputs, mm_hashes, mm_positions
+              └── sampling_params</code></pre>
+
+    <h3>6.2 OutputProcessor</h3>
+    <p><strong>文件</strong>：<code>vllm/v1/engine/output_processor.py</code></p>
+    <pre><code>OutputProcessor.process_outputs(engine_core_outputs)
+       │
+       for output in engine_core_outputs:
+       │
+       ├── 1. Detokenizer.detokenize(request_state, new_token_ids)
+       │      └── 增量 decode：只 decode 新增 token
+       │          ├── 处理 skip_special_tokens / spaces_between_tokens
+       │          └── 检测 stop strings（需要保留 buffer）
+       │
+       ├── 2. StopChecker.check(request_state, output)
+       │      ├── EOS token 检测
+       │      ├── stop words 匹配
+       │      ├── max_tokens 长度检查
+       │      └── min_tokens 最短长度保护
+       │
+       ├── 3. 构建 CompletionOutput
+       │      ├── text（decoded string）
+       │      ├── token_ids
+       │      ├── logprobs（如需要）
+       │      └── finish_reason
+       │
+       └── 4. 构建 RequestOutput
+              ├── request_id
+              ├── prompt（原始输入）
+              └── outputs: list[CompletionOutput]</code></pre>
+
+    <h3>6.3 增量 Detokenize 机制</h3>
+    <pre><code>Step N:   token_ids = [1, 2, 3]   decoded = "Hello world"
+Step N+1: token_ids = [1, 2, 3, 4]
+           新 token [4] = "!"
+           增量解码: decode([3, 4]) = " world!" 去掉之前的 " world"
+           → delta = "!"
+
+（需要上文是因为有些 tokenizer 的 token 拼接会受前后文影响）</code></pre>
+  </section>
+
+  <!-- ── 7. Scheduler ──────────────────────────── -->
+  <section id="scheduler">
+    <h2>7. Scheduler（调度器）</h2>
+    <p><strong>文件</strong>：<code>vllm/v1/core/sched/scheduler.py</code></p>
+
+    <h3>7.1 核心设计哲学</h3>
+    <p>vLLM v1 调度器取消了 Prefill/Decode 两阶段区分，统一用 <code>num_computed_tokens</code> 描述请求状态：</p>
+    <pre><code>每个请求维护:
+  num_computed_tokens  ←  已有 KV Cache 的 token 数
+  num_tokens           ←  prompt_len + output_len（含推测 token）
+
+  diff = num_tokens - num_computed_tokens  ←  本步需计算的 token 数</code></pre>
+    <p>这一设计自然支持：</p>
+    <ul>
+      <li><strong>Chunked Prefill</strong>：Prefill 可分多步完成（每步计算 diff 的一部分）</li>
+      <li><strong>推测解码</strong>：Spec token 也计入 num_tokens</li>
+      <li><strong>Prefix Caching</strong>：命中时直接设 num_computed_tokens = 命中块数 × block_size</li>
+    </ul>
+
+    <h3>7.2 请求生命周期</h3>
+    <div class="diagram-wrap">
+      <h4>请求状态机（调度器生命周期）</h4>
+      <div class="mermaid">
+stateDiagram-v2
+    [*] --> WAITING : add_request()
+    WAITING --> RUNNING : schedule()\n有空闲内存
+    RUNNING --> WAITING : 内存不足（抢占）
+    RUNNING --> FINISHED_STOPPED : finish_reason = STOP/EOS
+    RUNNING --> FINISHED_LENGTH : max_tokens 达到
+    RUNNING --> FINISHED_ABORT : abort() 用户取消
+    FINISHED_STOPPED --> [*]
+    FINISHED_LENGTH --> [*]
+    FINISHED_ABORT --> [*]
+      </div>
+    </div>
+
+    <h3>7.3 schedule() 详细流程</h3>
+    <pre><code>schedule() → SchedulerOutput
+═══════════════════════════════════════════════════════
+
+初始化 budget:
+  remaining_tokens = max_num_batched_tokens   # 本步 token 预算
+  remaining_reqs   = max_num_seqs             # 最大并发数
+
+────────────────────────────────────────
+阶段一：处理 RUNNING 队列（优先级高）
+────────────────────────────────────────
+for request in running_queue (优先级从高到低):
+
+  num_new_tokens = request.num_tokens - request.num_computed_tokens
+
+  # Chunked Prefill 截断
+  if num_new_tokens > remaining_tokens:
+      if can_do_partial_prefill(request):
+          num_new_tokens = remaining_tokens
+      else:
+          preempt(request)  # 大 Prefill 请求暂时抢占
+          continue
+
+  # 分配 KV 块
+  result = kv_cache_manager.allocate_slots(request, num_new_tokens)
+
+  if result == NO_FREE_BLOCKS:
+      # 内存不足，抢占
+      preempt(request)   # 释放 KV 块，移回 WAITING
+      continue
+
+  # 成功调度
+  scheduled_running.append(request)
+  remaining_tokens -= num_new_tokens
+
+────────────────────────────────────────
+阶段二：处理 WAITING 队列（填充预算）
+────────────────────────────────────────
+for request in waiting_queue (FCFS 或 priority 排序):
+
+  if remaining_tokens &lt;= 0: break
+
+  # 查找前缀缓存命中
+  computed_blocks, num_computed = \
+      kv_cache_manager.get_computed_blocks(request)
+
+  # 检查是否能放入剩余预算
+  num_new_tokens = min(
+      request.num_tokens - num_computed,
+      remaining_tokens,
+      max_chunk_size
+  )
+
+  if num_new_tokens &lt;= 0: continue
+
+  # 检查是否有足够空闲块
+  if not kv_cache_manager.can_allocate(num_new_tokens):
+      break  # 内存不足，停止从 WAITING 拉取
+
+  # 分配 KV 块并移至 RUNNING
+  kv_cache_manager.allocate_slots(request, num_new_tokens, computed_blocks)
+  waiting → running
+  scheduled_new_reqs.append(request)
+  remaining_tokens -= num_new_tokens
+
+────────────────────────────────────────
+构建 SchedulerOutput
+────────────────────────────────────────
+return SchedulerOutput(
+    scheduled_new_reqs=scheduled_new_reqs,    # 首次调度的请求
+    scheduled_cached_reqs=scheduled_cached,   # 继续执行的请求
+    num_scheduled_tokens={req_id: n, ...},    # 本步各请求处理 token 数
+    total_num_scheduled_tokens=sum(n),
+    scheduled_spec_decode_tokens={...},       # 推测解码 token
+    finished_req_ids=finished,                # 本步完成的请求
+    preempted_req_ids=preempted,              # 被抢占的请求
+    ...
+)</code></pre>
+
+    <h3>7.4 update_from_outputs() 流程</h3>
+    <pre><code>update_from_outputs(scheduler_output, model_output, grammar_output)
+       │
+       for req_id, new_token_ids in model_output.sampled:
+       │
+       ├── request.output_token_ids.extend(new_token_ids)
+       ├── request.num_computed_tokens += num_scheduled_tokens[req_id]
+       │
+       ├── 检查停止条件:
+       │   ├── EOS token → FINISHED_STOPPED
+       │   ├── max_tokens 达到 → FINISHED_LENGTH
+       │   ├── stop words 匹配 → FINISHED_STOPPED
+       │   └── 用户 abort → FINISHED_ABORT
+       │
+       ├── 已完成 → 释放 KV 块（kv_cache_manager.free(request)）
+       │
+       └── 继续 → 更新推测解码状态（如有）
+
+       返回 list[EngineCoreOutput]</code></pre>
+
+    <h3>7.5 调度器关键参数</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>参数</th>
+          <th>默认值</th>
+          <th>作用</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>max_num_batched_tokens</code></td>
+          <td>16384</td>
+          <td>每步最多处理的 token 总数</td>
+        </tr>
+        <tr>
+          <td><code>max_num_seqs</code></td>
+          <td>1024</td>
+          <td>最大并发请求数</td>
+        </tr>
+        <tr>
+          <td><code>enable_chunked_prefill</code></td>
+          <td>True</td>
+          <td>允许 Prefill 分块处理</td>
+        </tr>
+        <tr>
+          <td><code>max_num_partial_prefills</code></td>
+          <td>1</td>
+          <td>每步同时允许的 Chunked Prefill 请求数</td>
+        </tr>
+        <tr>
+          <td><code>long_prefill_token_threshold</code></td>
+          <td>0</td>
+          <td>超过此长度的 Prefill 独占一步</td>
+        </tr>
+        <tr>
+          <td><code>scheduling_policy</code></td>
+          <td><code>"fcfs"</code></td>
+          <td><code>fcfs</code>（先到先服务）或 <code>"priority"</code></td>
+        </tr>
+        <tr>
+          <td><code>num_scheduler_steps</code></td>
+          <td>1</td>
+          <td>每次 step 调度多少步（Multi-step）</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>7.6 Chunked Prefill 对 TTFT/TPOT 的影响</h3>
+    <pre><code>不启用 Chunked Prefill:
+  ┌──────────────────────────────┬──┬──┬──┬──┐
+  │  长 Prefill (2048 tokens)    │D1│D2│D3│D4│  ← Decode 被阻塞
+  └──────────────────────────────┴──┴──┴──┴──┘
+  问题：TTFT 极高（等待长 Prefill 完成），TPOT 受影响
+
+启用 Chunked Prefill (chunk_size=512):
+  ┌──────┬──┬──────┬──┬──────┬──┬──────┬──┐
+  │ P512 │D1│ P512 │D2│ P512 │D3│ P512 │D4│  ← Prefill 与 Decode 混合
+  └──────┴──┴──────┴──┴──────┴──┴──────┴──┘
+  好处：TTFT 分摊，TPOT 稳定，GPU 利用率更均匀</code></pre>
+
+    <h3>7.7 抢占机制</h3>
+    <pre><code>抢占触发条件：RUNNING 中的请求 KV 块分配失败
+
+抢占策略（RECOMPUTE 模式）:
+  1. 选择最低优先级（FCFS 中最后进入的）请求
+  2. 释放其所有 KV 块（ref_count-- → 如归零则加入 free_pool）
+  3. 请求状态: RUNNING → WAITING
+  4. 本请求保留 prompt_token_ids，下次重新从头调度
+
+  注意：如果 APC 的前缀块未被驱逐，重调度时可命中缓存，
+        只需重新计算被驱逐后的部分</code></pre>
+  </section>
+
+  <!-- ── 8. 关键数据结构 ──────────────────────────── -->
+  <section id="data-structures">
+    <h2>8. 关键数据结构</h2>
+
+    <h3>8.1 Request（调度器内部状态）</h3>
+    <pre><code class="language-python">class Request:
+    request_id: str
+    prompt_token_ids: list[int]          # 原始 prompt token
+    sampling_params: SamplingParams
+    arrival_time: float
+
+    # 状态
+    status: RequestStatus                 # WAITING/RUNNING/FINISHED_*
+    num_computed_tokens: int             # 已有 KV Cache 的 token 数
+    output_token_ids: list[int]          # 已生成的 token
+
+    # KV Cache 相关
+    block_ids: list[list[int]]           # [layer_idx][block_idx] → block_id
+    block_hashes: list[BlockHash]        # 用于 APC 的块哈希
+
+    # 属性（只读）
+    @property
+    def num_tokens(self) -> int:
+        return len(self.prompt_token_ids) + len(self.output_token_ids)
+
+    @property
+    def is_prefill(self) -> bool:
+        return self.num_computed_tokens &lt; len(self.prompt_token_ids)</code></pre>
+
+    <h3>8.2 SchedulerOutput</h3>
+    <pre><code class="language-python">class SchedulerOutput:
+    # 本步调度的请求
+    scheduled_new_reqs: list[NewRequestData]      # 首次调度（含完整 token_ids）
+    scheduled_cached_reqs: list[CachedRequestData] # 续跑（仅增量 block_ids）
+    scheduled_spec_decode_tokens: dict[str, list[int]]
+
+    # Token 数量
+    num_scheduled_tokens: dict[str, int]           # req_id → token 数
+    total_num_scheduled_tokens: int
+
+    # 完成/抢占
+    finished_req_ids: set[str]
+    preempted_req_ids: set[str]
+
+    # 结构化输出
+    grammar_bitmask: list[torch.Tensor] | None</code></pre>
+
+    <h3>8.3 EngineCoreOutput</h3>
+    <pre><code class="language-python">class EngineCoreOutput(msgspec.Struct):
+    request_id: str
+    new_token_ids: list[int]             # 本步新生成的 token
+    finish_reason: FinishReason | None   # None = 未完成
+    stop_reason: str | int | None        # 停止词/token
+    logprobs: LogprobsLists | None       # top-k logprobs（如需要）
+    prompt_logprobs_dict: dict | None    # prompt logprobs（如需要）
+    num_cached_tokens: int = 0           # APC 命中的 token 数（统计用）</code></pre>
+  </section>
+
+  <!-- ── 9. 完整时序图 ──────────────────────────── -->
+  <section id="sequence-diagrams">
+    <h2>9. 完整时序图</h2>
+
+    <h3>9.1 同步路径（LLM.generate）</h3>
+    <div class="diagram-wrap">
+      <h4>同步路径完整时序</h4>
+      <div class="mermaid">
+sequenceDiagram
+    participant User as 用户
+    participant LE as LLMEngine
+    participant IP as InputProc
+    participant ECC as EngineCoreClient
+    participant EC as EngineCore
+    participant GPU as GPUWorker
+
+    User->>LE: generate(prompts, params)
+    loop for prompt in prompts
+        LE->>IP: process()
+        IP-->>LE: EngineCoreRequest
+        LE->>ECC: add_request()
+        ECC->>EC: ZMQ PUSH
+    end
+
+    loop while not done
+        LE->>ECC: step() → get_output()
+        Note over EC,GPU: EngineCore 独立运行 busy loop
+        EC->>EC: schedule()
+        EC->>GPU: execute_model()
+        GPU-->>EC: forward() + sample() result
+        EC->>EC: update_from_outputs()
+        EC-->>ECC: EngineCoreOutputs via ZMQ PULL
+        ECC-->>LE: outputs
+        LE->>LE: process_outputs()\ndetokenize + stop check
+        LE-->>User: list[RequestOutput]
+    end
+      </div>
+    </div>
+
+    <h3>9.2 异步路径（AsyncLLM / API Server）</h3>
+    <div class="diagram-wrap">
+      <h4>异步路径完整时序</h4>
+      <div class="mermaid">
+sequenceDiagram
+    participant HTTP as HTTP Client
+    participant API as API Server
+    participant AL as AsyncLLM
+    participant BG as _bg_loop
+    participant EC as EngineCore
+    participant GPU as GPUWorker
+
+    HTTP->>API: POST /chat/completions
+    API->>AL: generate()
+    AL->>BG: add_req
+    BG->>EC: ZMQ PUSH
+    EC->>GPU: step()
+    GPU-->>EC: result
+    EC-->>BG: ZMQ outputs
+    BG->>BG: put(Queue_A, out_1)
+    BG-->>AL: Queue_A
+    AL-->>API: yield out_1
+    API-->>HTTP: chunk 1
+    EC-->>BG: ZMQ outputs
+    BG->>BG: put(Queue_A, out_2)
+    AL-->>API: yield out_2
+    API-->>HTTP: chunk 2
+    Note over AL,API: out.finished=True
+    API-->>HTTP: complete
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 10. 关键设计决策 ──────────────────────────── -->
+  <section id="design-decisions">
+    <h2>10. 关键设计决策</h2>
+
+    <h3>10.1 为什么用 num_computed_tokens 而非 Prefill/Decode 状态？</h3>
+    <p>传统框架将请求分为 Prefill（处理 prompt）和 Decode（生成 token）两阶段。vLLM v1 改为单一整数 <code>num_computed_tokens</code>：</p>
+    <p><strong>好处</strong>：</p>
+    <ol>
+      <li><strong>Chunked Prefill 自然支持</strong>：Prefill 分块只是多次增加 <code>num_computed_tokens</code></li>
+      <li><strong>推测解码统一</strong>：Spec token 也计入 <code>num_tokens</code>，不需要特殊处理</li>
+      <li><strong>代码简化</strong>：消除了大量 <code>if is_prefill</code> 条件分支</li>
+      <li><strong>未来扩展性</strong>：支持 Jump Decoding 等新模式</li>
+    </ol>
+
+    <h3>10.2 为什么用进程隔离？</h3>
+    <div class="callout warn">
+      <strong>单进程方案的问题</strong>
+      Tokenize（CPU密集）→ 阻塞 GPU 推理；GPU 推理 → 阻塞 Tokenize；Python GIL → 真正的 CPU 并行度受限。
+    </div>
+    <div class="callout tip">
+      <strong>进程分离方案</strong>
+      前端进程: Tokenize/Detokenize（CPU密集）并发运行；后端进程: GPU 推理 → 两者真正并行，互不阻塞。
+    </div>
+
+    <h3>10.3 结构化输出与模型执行的并行化</h3>
+    <pre><code class="language-python"># EngineCore.step() 中的关键优化：
+future = self.executor.execute_model(scheduler_output, non_block=True)
+# ↑ 立即返回，GPU 在后台执行
+
+grammar_output = self.scheduler.get_grammar_bitmask(scheduler_output)
+# ↑ 在 GPU 执行期间，CPU 同时编译语法约束 bitmask（可能很耗时）
+
+model_output = future.result()
+# ↑ 等待 GPU 完成，如果 bitmask 在此之前完成则零等待</code></pre>
+
+    <h3>10.4 FCFS vs Priority 调度策略</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>策略</th>
+          <th>优点</th>
+          <th>缺点</th>
+          <th>适用场景</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>fcfs</code></td>
+          <td>简单、公平、无饥饿</td>
+          <td>短请求可能等长请求</td>
+          <td>通用服务</td>
+        </tr>
+        <tr>
+          <td><code>priority</code></td>
+          <td>高优先级请求低延迟</td>
+          <td>低优先级请求可能饥饿</td>
+          <td>SLA 分级服务</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <footer class="report-footer">
+    <span>CJ-Note · LLM Inference Research</span>
+    <span>Generated 2026-04-10</span>
+  </footer>
+</div>
+
+<script>
+  // Initialize Mermaid with dark theme
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      background: '#161b22',
+      primaryColor: '#1f6feb',
+      primaryTextColor: '#e6edf3',
+      lineColor: '#8b949e'
+    }
+  });
+</script>
+</body>
+</html>

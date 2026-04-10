@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang MemCache 缓存系统深度解析">
+  <meta name="report-type"  content="repo">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang MemCache 缓存系统深度解析">
+  <meta name="report-type"  content="sglang">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+<title>SGLang MemCache 缓存系统深度解析</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}:root{--bg:#0d1117;--bg2:#161b22;--bg3:#1c2128;--border:#30363d;--text:#e6edf3;--text2:#8b949e;--text3:#656d76;--cyan:#39d0d8;--blue:#58a6ff;--green:#3fb950;--yellow:#e3b341;--orange:#f78166;--purple:#bc8cff;--red:#f85149;--font-mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace}html{scroll-behavior:smooth}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif;background:var(--bg);color:var(--text);line-height:1.75;font-size:16px}.page-wrap{display:grid;grid-template-columns:260px 1fr;min-height:100vh}@media(max-width:900px){.page-wrap{grid-template-columns:1fr}.sidebar{display:none}}.sidebar{position:sticky;top:0;height:100vh;overflow-y:auto;background:var(--bg2);border-right:1px solid var(--border);padding:24px 16px}.sidebar-brand{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:16px}.toc a{display:block;padding:6px 8px;font-size:13px;color:var(--text2);text-decoration:none;border-radius:6px;margin-bottom:2px}.toc a:hover{background:var(--bg3);color:var(--cyan)}main{max-width:960px;margin:0 auto;padding:48px 32px}h1{font-size:2.2rem;margin-bottom:8px;background:linear-gradient(135deg,var(--cyan),var(--blue));-webkit-background-clip:text;-webkit-text-fill-color:transparent}.subtitle{color:var(--text2);font-size:1rem;margin-bottom:40px}h2{font-size:1.5rem;color:var(--cyan);margin:48px 0 16px;padding-bottom:8px;border-bottom:1px solid var(--border)}h3{font-size:1.15rem;color:var(--blue);margin:32px 0 12px}h4{font-size:1rem;color:var(--purple);margin:24px 0 8px}p,li{margin-bottom:12px}ul,ol{padding-left:24px}a{color:var(--blue);text-decoration:none}.card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px;margin:16px 0}table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px}th,td{padding:10px 14px;text-align:left;border:1px solid var(--border)}th{background:var(--bg3);color:var(--cyan)}td{background:var(--bg2)}code{font-family:var(--font-mono);background:var(--bg3);padding:2px 6px;border-radius:4px;font-size:0.9em;color:var(--orange)}pre{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:16px;overflow-x:auto;margin:16px 0;font-size:13px}pre code{background:none;padding:0;color:var(--text)}.mermaid{background:var(--bg2);border-radius:12px;padding:20px;margin:16px 0;display:flex;justify-content:center}.highlight{background:rgba(57,208,216,0.08);border-left:3px solid var(--cyan);padding:16px 20px;border-radius:0 8px 8px 0;margin:16px 0}
+</style>
+</head>
+<body>
+<div class="page-wrap">
+<nav class="sidebar">
+<div class="sidebar-brand">SGLang Research</div>
+<div class="toc">
+<a href="#overview">1. 系统总览</a>
+<a href="#radix-tree">2. RadixTree 前缀树</a>
+<a href="#tree-node">3. TreeNode 与 RadixKey</a>
+<a href="#memory-pool">4. 内存池层次结构</a>
+<a href="#kv-cache">5. KVCache 实现</a>
+<a href="#allocator">6. KV 缓存分配器</a>
+<a href="#eviction">7. 驱逐策略</a>
+<a href="#hiradix">8. HiRadixCache 分层缓存</a>
+<a href="#storage">9. 外部存储后端</a>
+<a href="#common-ops">10. 缓存公共操作</a>
+<a href="#lifecycle">11. 请求缓存生命周期</a>
+<a href="#summary">12. 总结</a>
+</div>
+</nav>
+<main>
+
+<h1>SGLang MemCache 缓存系统</h1>
+<p class="subtitle">深入分析 RadixTree 前缀缓存、内存池层次结构、KV 缓存分配/驱逐策略、HiRadixCache 分层缓存与外部存储后端</p>
+
+<h2 id="overview">1. 系统总览</h2>
+<p>SGLang 的缓存系统是推理引擎性能的核心支柱，通过 Radix Tree 实现高效的 KV 缓存前缀复用，结合多级内存池管理和可插拔驱逐策略，最大化 GPU 内存利用率。</p>
+
+<div class="card">
+<table>
+<tr><th>文件</th><th>核心类/函数</th><th>职责</th></tr>
+<tr><td>radix_cache.py</td><td><code>RadixCache</code>, <code>TreeNode</code>, <code>RadixKey</code></td><td>Radix Tree 前缀缓存核心实现</td></tr>
+<tr><td>base_prefix_cache.py</td><td><code>BasePrefixCache</code>, <code>MatchResult</code></td><td>前缀缓存抽象基类与匹配结果</td></tr>
+<tr><td>memory_pool.py</td><td><code>ReqToTokenPool</code>, <code>KVCache</code>, <code>MHATokenToKVPool</code>, <code>MLATokenToKVPool</code></td><td>请求映射池与物理 KV 缓存</td></tr>
+<tr><td>allocator.py</td><td><code>TokenToKVPoolAllocator</code>, <code>PagedTokenToKVPoolAllocator</code></td><td>KV 缓存索引分配器</td></tr>
+<tr><td>evict_policy.py</td><td><code>EvictionStrategy</code>, <code>LRUStrategy</code> 等</td><td>6 种驱逐策略实现</td></tr>
+<tr><td>hiradix_cache.py</td><td><code>HiRadixCache</code></td><td>分层缓存(GPU + Host + 外部存储)</td></tr>
+<tr><td>memory_pool_host.py</td><td><code>MHATokenToKVPoolHost</code>, <code>MLATokenToKVPoolHost</code></td><td>主机端 KV 缓存池</td></tr>
+<tr><td>common.py</td><td><code>write_cache_indices</code>, <code>alloc_for_extend</code></td><td>缓存公共操作与 Triton kernel</td></tr>
+<tr><td>storage/backend_factory.py</td><td><code>StorageBackendFactory</code></td><td>外部存储后端工厂</td></tr>
+</table>
+</div>
+
+<div class="mermaid">
+graph TB
+    subgraph "SGLang 缓存系统层次"
+        RC["RadixCache<br/>(前缀树)"] --> RTP["ReqToTokenPool<br/>(请求→token映射)"]
+        RC --> ALLOC["TokenToKVPoolAllocator<br/>(索引分配器)"]
+        ALLOC --> KVC["KVCache<br/>(物理KV缓存)"]
+        RC --> EP["EvictionStrategy<br/>(驱逐策略)"]
+
+        HRC["HiRadixCache"] -->|继承| RC
+        HRC --> HOST["TokenToKVPoolHost<br/>(主机内存池)"]
+        HRC --> CC["HiCacheController<br/>(缓存控制器)"]
+        CC --> SB["StorageBackendFactory<br/>(外部存储)"]
+    end
+    style RC fill:#39d0d8,color:#0d1117
+    style HRC fill:#58a6ff,color:#0d1117
+    style KVC fill:#f78166,color:#0d1117
+    style SB fill:#bc8cff,color:#0d1117
+</div>
+
+<h2 id="radix-tree">2. RadixTree 前缀树</h2>
+<p><code>RadixCache</code> 继承自 <code>BasePrefixCache</code>，实现了基于 Radix Tree 的前缀缓存机制，允许不同请求共享相同前缀的 KV 缓存。</p>
+
+<h3>2.1 核心数据结构</h3>
+<div class="mermaid">
+classDiagram
+    class BasePrefixCache {
+        <<abstract>>
+        +reset()
+        +match_prefix(params) MatchResult
+        +cache_finished_req(req)
+        +cache_unfinished_req(req)
+        +evict(num_tokens)
+        +inc_lock_ref(node)
+        +dec_lock_ref(node)
+        +evictable_size() int
+        +protected_size() int
+    }
+    class RadixCache {
+        +root_node: TreeNode
+        +evictable_size_: int
+        +protected_size_: int
+        +page_size: int
+        +eviction_strategy: EvictionStrategy
+        +key_match_fn: Callable
+        +match_prefix(params) MatchResult
+        +insert(key, value, priority)
+        +evict(num_tokens)
+        +cache_finished_req(req)
+        +cache_unfinished_req(req)
+    }
+    class MatchResult {
+        +device_indices: Tensor
+        +last_device_node: TreeNode
+        +last_host_node: TreeNode
+        +host_hit_length: int
+    }
+    BasePrefixCache <|-- RadixCache
+    RadixCache --> MatchResult
+</div>
+
+<h3>2.2 初始化与策略选择</h3>
+<pre><code>class RadixCache(BasePrefixCache):
+    def __init__(self, params: CacheInitParams):
+        self.page_size = params.page_size
+        self.eviction_policy = params.eviction_policy.lower()
+
+        # 根据 page_size 选择键匹配函数
+        if self.page_size == 1:
+            self.key_match_fn = _key_match_page_size1
+        else:
+            self.key_match_fn = partial(_key_match_paged, page_size=self.page_size)
+
+        # 根据策略名初始化驱逐策略
+        if self.eviction_policy == "lru":
+            self.eviction_strategy = LRUStrategy()
+        elif self.eviction_policy == "lfu":
+            self.eviction_strategy = LFUStrategy()
+        # ... fifo, mru, filo, priority
+        self.reset()</code></pre>
+
+<h3>2.3 前缀匹配流程</h3>
+<div class="mermaid">
+flowchart TD
+    A["match_prefix(key)"] --> B["maybe_bigram_convert(key)<br/>(EAGLE模式转换)"]
+    B --> C{" disable 或 key 为空?"}
+    C -->|是| D["返回空 MatchResult"]
+    C -->|否| E{" page_size != 1?"}
+    E -->|是| F["截断 key 到 page 对齐长度"]
+    E -->|否| G["直接使用 key"]
+    F --> G
+    G --> H["_match_prefix_helper(root, key)"]
+    H --> I["遍历树节点匹配"]
+    I --> J{" 部分匹配?"}
+    J -->|是| K["_split_node() 分裂节点"]
+    J -->|否| L["完全匹配，继续向下"]
+    K --> M["返回 MatchResult<br/>(device_indices, last_node)"]
+    L --> M
+    style A fill:#39d0d8,color:#0d1117
+    style H fill:#58a6ff,color:#0d1117
+    style K fill:#f78166,color:#0d1117
+</div>
+
+<h3>2.4 树遍历匹配实现</h3>
+<pre><code>def _match_prefix_helper(self, node, key):
+    access_time = time.monotonic()
+    node.last_access_time = access_time
+    child_key = self.get_child_key_fn(key)
+    value = []
+
+    while len(key) > 0 and child_key in node.children.keys():
+        child = node.children[child_key]
+        child.last_access_time = access_time
+        prefix_len = self.key_match_fn(child.key, key)
+
+        if prefix_len < len(child.key):
+            # 部分匹配 -> 分裂节点
+            new_node = self._split_node(child.key, child, prefix_len)
+            value.append(new_node.value)
+            node = new_node
+            break
+        else:
+            # 完全匹配 -> 继续向下
+            value.append(child.value)
+            node = child
+            key = key[prefix_len:]
+            if len(key):
+                child_key = self.get_child_key_fn(key)
+
+    return value, node</code></pre>
+
+<h3>2.5 节点分裂</h3>
+<div class="mermaid">
+flowchart LR
+    subgraph "分裂前"
+        P1["Parent"] --> C1["Child<br/>key=[A,B,C,D]<br/>value=[v1,v2,v3,v4]"]
+    end
+    subgraph "分裂后 (split_len=2)"
+        P2["Parent"] --> N["NewNode<br/>key=[A,B]<br/>value=[v1,v2]"]
+        N --> C2["Child<br/>key=[C,D]<br/>value=[v3,v4]"]
+    end
+    style N fill:#39d0d8,color:#0d1117
+    style C2 fill:#f78166,color:#0d1117
+</div>
+
+<h3>2.6 键匹配函数</h3>
+<table>
+<tr><th>函数</th><th>适用场景</th><th>匹配方式</th></tr>
+<tr><td><code>_key_match_page_size1</code></td><td>page_size=1</td><td>逐 token 比较，返回首个不匹配位置</td></tr>
+<tr><td><code>_key_match_paged</code></td><td>page_size>1</td><td>按页对齐比较，每次比较 page_size 个 token</td></tr>
+</table>
+
+<div class="highlight">
+<strong>extra_key 命名空间隔离：</strong>RadixKey 携带可选的 <code>extra_key</code> 字段(如 LoRA ID、cache_salt)，不同 extra_key 的请求在前缀匹配时互不共享节点，实现逻辑上的缓存隔离。
+</div>
+
+<h2 id="tree-node">3. TreeNode 与 RadixKey</h2>
+
+<h3>3.1 TreeNode 数据结构</h3>
+<div class="card">
+<table>
+<tr><th>属性</th><th>类型</th><th>描述</th></tr>
+<tr><td><code>children</code></td><td>defaultdict(TreeNode)</td><td>子节点字典，key 为 child_key</td></tr>
+<tr><td><code>parent</code></td><td>TreeNode</td><td>父节点引用</td></tr>
+<tr><td><code>key</code></td><td>RadixKey</td><td>本节点存储的 token 序列片段</td></tr>
+<tr><td><code>value</code></td><td>torch.Tensor</td><td>KV 缓存索引(GPU 端)，None 表示已驱逐</td></tr>
+<tr><td><code>lock_ref</code></td><td>int</td><td>锁引用计数，>0 时不可被驱逐</td></tr>
+<tr><td><code>last_access_time</code></td><td>float</td><td>最后访问时间(LRU/MRU 策略)</td></tr>
+<tr><td><code>creation_time</code></td><td>float</td><td>创建时间(FIFO/FILO 策略)</td></tr>
+<tr><td><code>hit_count</code></td><td>int</td><td>命中次数(LFU 策略 / write_through 阈值)</td></tr>
+<tr><td><code>priority</code></td><td>int</td><td>优先级(Priority 策略)</td></tr>
+<tr><td><code>host_value</code></td><td>torch.Tensor</td><td>主机端 KV 缓存索引(HiCache)</td></tr>
+<tr><td><code>hash_value</code></td><td>List[str]</td><td>SHA256 哈希值列表(每页一个)</td></tr>
+<tr><td><code>host_ref_counter</code></td><td>int</td><td>主机端引用计数(保护正在传输的数据)</td></tr>
+<tr><td><code>id</code></td><td>int</td><td>全局唯一节点 ID</td></tr>
+</table>
+</div>
+
+<h3>3.2 RadixKey 封装</h3>
+<pre><code>class RadixKey:
+    def __init__(self, token_ids, extra_key=None, is_bigram=False):
+        self.token_ids = token_ids     # token ID 序列
+        self.extra_key = extra_key     # 可选的命名空间标识(LoRA ID 等)
+        self.is_bigram = is_bigram     # 是否为 EAGLE bigram 键</code></pre>
+
+<h3>3.3 节点状态属性</h3>
+<div class="mermaid">
+graph TB
+    N["TreeNode"] --> E{" evicted?"}
+    E -->|"value is None"| EV["已驱逐<br/>(仅保留host_value)"]
+    E -->|"value 有效"| AV["活跃节点<br/>(GPU缓存有效)"]
+    N --> B{" backuped?"}
+    B -->|"host_value is not None"| BK["已备份<br/>(有主机端副本)"]
+    B -->|"host_value is None"| NB["未备份"]
+    N --> L{" lock_ref > 0?"}
+    L -->|是| LK["被锁定<br/>(不可驱逐)"]
+    L -->|否| UL["可驱逐"]
+    style N fill:#39d0d8,color:#0d1117
+    style EV fill:#f85149,color:#0d1117
+    style AV fill:#3fb950,color:#0d1117
+    style BK fill:#58a6ff,color:#0d1117
+</div>
+
+<h3>3.4 哈希计算</h3>
+<p><code>compute_node_hash_values</code> 使用 SHA256 链式哈希为每个页面生成位置感知的唯一标识：</p>
+<pre><code>def compute_node_hash_values(node, page_size):
+    hash_values = []
+    parent_hash = None
+    if node.parent and node.parent.hash_value:
+        parent_hash = node.parent.hash_value[-1]  # 父节点最后一页的哈希
+
+    for start in range(0, len(node.key), page_size):
+        page_tokens = node.key.token_ids[start : start + page_size]
+        hash_val = get_hash_str(page_tokens, prior_hash=parent_hash)
+        hash_values.append(hash_val)
+        parent_hash = hash_val  # 链式传递
+    return hash_values</code></pre>
+
+<h2 id="memory-pool">4. 内存池层次结构</h2>
+<p>SGLang 的内存管理采用三级层次：ReqToTokenPool -> TokenToKVPoolAllocator -> KVCache。</p>
+
+<div class="mermaid">
+graph TB
+    subgraph "三级内存池架构"
+        RTP["ReqToTokenPool<br/>请求→token位置映射<br/>[max_batch, max_context_len]"]
+        ALLOC["TokenToKVPoolAllocator<br/>管理 KV 缓存索引<br/>free_pages / release_pages"]
+        KVC["KVCache (物理存储)<br/>实际 KV 张量"]
+    end
+    REQ["Req (请求)"] -->|"req_pool_idx"| RTP
+    RTP -->|"req_to_token[idx, :seq_len]"| ALLOC
+    ALLOC -->|"索引指向"| KVC
+
+    style RTP fill:#39d0d8,color:#0d1117
+    style ALLOC fill:#58a6ff,color:#0d1117
+    style KVC fill:#f78166,color:#0d1117
+</div>
+
+<h3>4.1 ReqToTokenPool</h3>
+<p>请求到 token 位置的映射池，核心是一个 <code>[size, max_context_len]</code> 的 int32 张量。</p>
+<pre><code>class ReqToTokenPool:
+    def __init__(self, size, max_context_len, device, enable_memory_saver):
+        self.req_to_token = torch.zeros(
+            (size, max_context_len), dtype=torch.int32, device=device
+        )
+        self.free_slots = list(range(size))
+
+    def alloc(self, need_size):    # 分配请求槽位
+    def free(self, free_index):     # 释放请求槽位
+    def write(self, indices, values): # 写入 token 映射</code></pre>
+
+<h3>4.2 ReqToTokenPool 变体</h3>
+<table>
+<tr><th>类型</th><th>适用架构</th><th>额外功能</th></tr>
+<tr><td><code>ReqToTokenPool</code></td><td>标准 Transformer</td><td>基础请求→token映射</td></tr>
+<tr><td><code>HybridReqToTokenPool</code></td><td>Mamba / 混合模型</td><td>额外管理 MambaPool 的 conv_state 和 temporal_state</td></tr>
+</table>
+
+<h3>4.3 MambaPool</h3>
+<p>专用于 Mamba/SSM 模型的状态池，存储卷积状态和时序状态：</p>
+<div class="card">
+<table>
+<tr><th>状态</th><th>形状</th><th>描述</th></tr>
+<tr><td><code>conv_state</code></td><td>[num_layers, size+1, ...conv_shape]</td><td>卷积滑动窗口状态</td></tr>
+<tr><td><code>temporal_state</code></td><td>[num_layers, size+1, ...temporal_shape]</td><td>SSM 时序递归状态</td></tr>
+<tr><td><code>intermediate_ssm</code></td><td>[num_layers, spec_size+1, draft_tokens, ...]</td><td>投机解码中间 SSM 状态</td></tr>
+<tr><td><code>intermediate_conv_window</code></td><td>[num_layers, spec_size+1, draft_tokens, ...]</td><td>投机解码中间卷积窗口</td></tr>
+</table>
+</div>
+
+<h2 id="kv-cache">5. KVCache 实现</h2>
+<p><code>KVCache</code> 是所有 KV 缓存物理存储的抽象基类，定义了统一的读写接口。</p>
+
+<h3>5.1 KVCache 类层次</h3>
+<div class="mermaid">
+classDiagram
+    class KVCache {
+        <<abstract>>
+        +size: int
+        +page_size: int
+        +dtype: torch.dtype
+        +layer_num: int
+        +get_key_buffer(layer_id) Tensor
+        +get_value_buffer(layer_id) Tensor
+        +get_kv_buffer(layer_id) Tuple
+        +set_kv_buffer(layer, loc, k, v)
+    }
+    class MHATokenToKVPool {
+        +k_buffer: List[Tensor]
+        +v_buffer: List[Tensor]
+        +head_num: int
+        +head_dim: int
+        +set_kv_buffer()
+        +move_kv_cache()
+    }
+    class MLATokenToKVPool {
+        +kv_buffer: List[Tensor]
+        +kv_lora_rank: int
+        +qk_rope_head_dim: int
+        +kv_cache_dim: int
+    }
+    class MHATokenToKVPoolFP4 {
+        +k_scale_buffer: List[Tensor]
+        +v_scale_buffer: List[Tensor]
+    }
+    class MLATokenToKVPoolFP4 {
+        +kv_scale_buffer: List[Tensor]
+    }
+    KVCache <|-- MHATokenToKVPool
+    KVCache <|-- MLATokenToKVPool
+    MHATokenToKVPool <|-- MHATokenToKVPoolFP4
+    MLATokenToKVPool <|-- MLATokenToKVPoolFP4
+</div>
+
+<h3>5.2 MHATokenToKVPool (标准 MHA)</h3>
+<table>
+<tr><th>缓冲区</th><th>形状</th><th>描述</th></tr>
+<tr><td><code>k_buffer[layer]</code></td><td>[size + page_size, head_num, head_dim]</td><td>每层 Key 缓存</td></tr>
+<tr><td><code>v_buffer[layer]</code></td><td>[size + page_size, head_num, v_head_dim]</td><td>每层 Value 缓存</td></tr>
+</table>
+
+<div class="highlight">
+<strong>Slot 0 预留：</strong>所有 KV 缓存的第 0 位(padded slot)用于写入填充 token 的 dummy 输出，避免越界写入对实际缓存的影响。
+</div>
+
+<h3>5.3 MLATokenToKVPool (MLA 架构)</h3>
+<table>
+<tr><th>缓冲区</th><th>形状</th><th>描述</th></tr>
+<tr><td><code>kv_buffer[layer]</code></td><td>[size + page_size, 1, kv_cache_dim]</td><td>压缩后的 KV 联合缓存</td></tr>
+</table>
+<p>其中 <code>kv_cache_dim = kv_lora_rank + qk_rope_head_dim</code>，MLA 将 K 和 V 压缩到单一低秩表示。</p>
+
+<h3>5.4 FP8 KV 缓存存储</h3>
+<pre><code># KVCache.__init__ 中的 FP8 处理
+if dtype in (torch.float8_e5m2, torch.float8_e4m3fn):
+    # Tensor.index_put 不支持 float8，存储为 uint8
+    self.store_dtype = torch.uint8
+else:
+    self.store_dtype = dtype</code></pre>
+
+<h3>5.5 set_kv_buffer 高性能写入</h3>
+<div class="mermaid">
+flowchart TD
+    A["set_kv_buffer(layer, loc, k, v)"] --> B{"same_kv_dim 且 can_use_store_cache?"}
+    B -->|是| C["store_cache JIT kernel<br/>(高性能批量写入)"]
+    B -->|否| D{"CUDA Graph 捕获模式?"}
+    D -->|是| E["双 Stream 并行写入<br/>k_cache[loc] = k (default)<br/>v_cache[loc] = v (alt_stream)"]
+    D -->|否| F["朴素索引赋值<br/>k_cache[loc] = k<br/>v_cache[loc] = v"]
+    style A fill:#39d0d8,color:#0d1117
+    style C fill:#3fb950,color:#0d1117
+</div>
+
+<h2 id="allocator">6. KV 缓存分配器</h2>
+<p>分配器管理 KV 缓存的索引空间，支持两种模式：逐 token 分配和分页分配。</p>
+
+<h3>6.1 分配器类层次</h3>
+<div class="mermaid">
+classDiagram
+    class BaseTokenToKVPoolAllocator {
+        <<abstract>>
+        +size: int
+        +page_size: int
+        +free_pages: Tensor
+        +release_pages: Tensor
+        +available_size() int
+        +alloc(need_size) Tensor
+        +free(free_index)
+        +clear()
+        +merge_and_sort_free()
+        +free_group_begin()
+        +free_group_end()
+    }
+    class TokenToKVPoolAllocator {
+        page_size = 1
+        +alloc(need_size) Tensor
+        +free(free_index)
+    }
+    class PagedTokenToKVPoolAllocator {
+        +num_pages: int
+        +alloc(need_size) Tensor
+        +alloc_extend(...) Tensor
+        +alloc_decode(...) Tensor
+        +free(free_index)
+    }
+    BaseTokenToKVPoolAllocator <|-- TokenToKVPoolAllocator
+    BaseTokenToKVPoolAllocator <|-- PagedTokenToKVPoolAllocator
+</div>
+
+<h3>6.2 TokenToKVPoolAllocator (page_size=1)</h3>
+<p>最简单的分配器，每个 token 独立占用一个 KV 缓存槽位。</p>
+<pre><code>class TokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
+    def alloc(self, need_size):
+        if self.need_sort and need_size > len(self.free_pages):
+            self.merge_and_sort_free()  # 合并 release_pages 并排序
+        if need_size > len(self.free_pages):
+            return None
+        select_index = self.free_pages[:need_size]
+        self.free_pages = self.free_pages[need_size:]
+        return select_index
+
+    def free(self, free_index):
+        if self.need_sort:
+            self.release_pages = torch.cat((self.release_pages, free_index))
+        else:
+            self.free_pages = torch.cat((self.free_pages, free_index))</code></pre>
+
+<h3>6.3 PagedTokenToKVPoolAllocator (page_size>1)</h3>
+<p>分页分配器以页(多个 token)为单位管理内存，使用 Triton kernel 高效计算分配位置。</p>
+
+<div class="mermaid">
+flowchart TD
+    A["alloc_extend(prefix_lens, seq_lens, last_loc)"] --> B["alloc_extend_kernel (Triton)"]
+    B --> C["Part 1: 填充旧的部分页<br/>(last_loc+1 开始)"]
+    C --> D["Part 2: 填充新的完整页<br/>(从 free_pages 分配)"]
+    D --> E["Part 3: 填充新的部分页<br/>(最后不满一页)"]
+    E --> F["更新 free_pages"]
+    F --> G["返回 out_indices"]
+    style A fill:#39d0d8,color:#0d1117
+    style B fill:#f78166,color:#0d1117
+</div>
+
+<h3>6.4 free_group 批量释放优化</h3>
+<div class="highlight">
+<strong>延迟释放机制：</strong>通过 <code>free_group_begin()</code> 和 <code>free_group_end()</code> 包裹的代码块中，所有 <code>free()</code> 调用不会立即归还内存，而是暂存到 <code>free_group</code> 列表。在 <code>free_group_end()</code> 时一次性 <code>torch.cat</code> 后释放，减少内存碎片和 Tensor 拼接开销。
+</div>
+
+<h3>6.5 need_sort 双缓冲区设计</h3>
+<table>
+<tr><th>缓冲区</th><th>用途</th><th>说明</th></tr>
+<tr><td><code>free_pages</code></td><td>可直接分配的页</td><td>有序排列，从前端分配</td></tr>
+<tr><td><code>release_pages</code></td><td>待合并的释放页</td><td>释放时追加，分配不足时合并排序</td></tr>
+</table>
+<p>当 <code>need_sort=True</code> 时，释放的页先进入 <code>release_pages</code>，仅在 <code>free_pages</code> 不足时才执行 <code>merge_and_sort_free()</code> 合并排序，减少排序频率。</p>
+
+<h2 id="eviction">7. 驱逐策略</h2>
+<p>SGLang 支持 6 种可插拔的驱逐策略，均实现 <code>EvictionStrategy</code> 抽象基类。</p>
+
+<h3>7.1 策略总览</h3>
+<div class="mermaid">
+graph TB
+    ES["EvictionStrategy"] --> LRU["LRU<br/>最近最少使用"]
+    ES --> LFU["LFU<br/>最不频繁使用"]
+    ES --> FIFO["FIFO<br/>先进先出"]
+    ES --> MRU["MRU<br/>最近最多使用"]
+    ES --> FILO["FILO<br/>先进后出"]
+    ES --> PRI["Priority<br/>优先级感知"]
+    style ES fill:#39d0d8,color:#0d1117
+</div>
+
+<h3>7.2 策略实现对比</h3>
+<table>
+<tr><th>策略</th><th>优先级计算</th><th>驱逐顺序</th><th>适用场景</th></tr>
+<tr><td><code>LRU</code></td><td><code>node.last_access_time</code></td><td>最久未访问的优先驱逐</td><td>通用场景(默认)</td></tr>
+<tr><td><code>LFU</code></td><td><code>(hit_count, last_access_time)</code></td><td>命中次数少的优先，相同时按时间</td><td>热点数据保护</td></tr>
+<tr><td><code>FIFO</code></td><td><code>node.creation_time</code></td><td>最早创建的优先驱逐</td><td>顺序处理</td></tr>
+<tr><td><code>MRU</code></td><td><code>-node.last_access_time</code></td><td>最近访问的优先驱逐</td><td>循环访问模式</td></tr>
+<tr><td><code>FILO</code></td><td><code>-node.creation_time</code></td><td>最新创建的优先驱逐</td><td>栈式访问模式</td></tr>
+<tr><td><code>Priority</code></td><td><code>(priority, last_access_time)</code></td><td>低优先级优先驱逐，同级别按 LRU</td><td>差异化缓存优先级</td></tr>
+</table>
+
+<h3>7.3 驱逐执行流程</h3>
+<div class="mermaid">
+flowchart TD
+    A["evict(num_tokens)"] --> B["_collect_leaves()<br/>收集所有叶节点"]
+    B --> C["构建堆: [(priority, node)]"]
+    C --> D["heapify 建最小堆"]
+    D --> E{" num_evicted < num_tokens<br/>且堆非空?"}
+    E -->|是| F["heappop 取最低优先级节点"]
+    F --> G["token_to_kv_pool_allocator.free(node.value)<br/>释放 KV 缓存"]
+    G --> H["_delete_leaf(node)<br/>从树中删除"]
+    H --> I{" 父节点变为叶且未锁定?"}
+    I -->|是| J["将父节点加入堆"]
+    I -->|否| E
+    J --> E
+    E -->|否| K["驱逐完成"]
+    style A fill:#39d0d8,color:#0d1117
+    style G fill:#f85149,color:#0d1117
+    style K fill:#3fb950,color:#0d1117
+</div>
+
+<h3>7.4 lock_ref 保护机制</h3>
+<pre><code>def inc_lock_ref(self, node):
+    """锁定节点及其所有祖先，防止被驱逐"""
+    delta = 0
+    while node != self.root_node:
+        if node.lock_ref == 0:
+            self.evictable_size_ -= len(node.key)
+            self.protected_size_ += len(node.key)
+        node.lock_ref += 1
+        node = node.parent
+    return delta
+
+def dec_lock_ref(self, node):
+    """解锁节点及其所有祖先"""
+    while node != self.root_node:
+        if node.lock_ref == 1:
+            self.evictable_size_ += len(node.key)
+            self.protected_size_ -= len(node.key)
+        node.lock_ref -= 1
+        node = node.parent</code></pre>
+
+<div class="highlight">
+<strong>驱逐安全性：</strong>当请求正在使用某个前缀缓存时，<code>inc_lock_ref</code> 会锁定从当前节点到根节点的整条路径。只有路径上所有引用都释放(lock_ref 回到 0)后，节点才可被驱逐。<code>_collect_leaves()</code> 仅收集 <code>lock_ref == 0</code> 的叶节点。
+</div>
+
+<h2 id="hiradix">8. HiRadixCache 分层缓存</h2>
+<p><code>HiRadixCache</code> 继承自 <code>RadixCache</code>，实现三级存储层次：GPU -> Host(CPU) -> 外部存储。</p>
+
+<h3>8.1 整体架构</h3>
+<div class="mermaid">
+graph TB
+    subgraph "HiRadixCache 三级存储"
+        GPU["GPU KVCache<br/>(热数据)"]
+        HOST["Host Memory Pool<br/>(温数据)"]
+        STOR["External Storage<br/>(冷数据)"]
+    end
+
+    GPU -->|"evict_device"| HOST
+    HOST -->|"evict_host"| STOR
+    STOR -->|"prefetch"| HOST
+    HOST -->|"load_back"| GPU
+
+    HRC["HiRadixCache"] --> CC["HiCacheController"]
+    CC --> WP{" write_policy"}
+    WP -->|"write_through"| WT["命中阈值后立即写入Host"]
+    WP -->|"write_back"| WB["驱逐时再写入Host"]
+
+    style GPU fill:#39d0d8,color:#0d1117
+    style HOST fill:#58a6ff,color:#0d1117
+    style STOR fill:#bc8cff,color:#0d1117
+    style HRC fill:#f78166,color:#0d1117
+</div>
+
+<h3>8.2 初始化配置</h3>
+<table>
+<tr><th>参数</th><th>来源</th><th>描述</th></tr>
+<tr><td><code>hicache_ratio</code></td><td>ServerArgs</td><td>主机内存池相对 GPU 的大小比例</td></tr>
+<tr><td><code>hicache_size</code></td><td>ServerArgs</td><td>主机内存池绝对大小</td></tr>
+<tr><td><code>hicache_write_policy</code></td><td>ServerArgs</td><td>写策略: write_through / write_back</td></tr>
+<tr><td><code>hicache_io_backend</code></td><td>ServerArgs</td><td>IO 后端: default / direct</td></tr>
+<tr><td><code>hicache_mem_layout</code></td><td>ServerArgs</td><td>内存布局: page_first / layer_first</td></tr>
+<tr><td><code>hicache_storage_backend</code></td><td>ServerArgs</td><td>外部存储: file / nixl / mooncake / hf3fs / aibrix / eic</td></tr>
+<tr><td><code>prefetch_threshold</code></td><td>extra_config</td><td>预取最小 token 数(默认 256)</td></tr>
+</table>
+
+<h3>8.3 write_through 写入策略</h3>
+<div class="mermaid">
+flowchart TD
+    A["节点插入/命中"] --> B["_inc_hit_count(node)"]
+    B --> C{"hit_count >= write_through_threshold?"}
+    C -->|否| D["等待下次命中"]
+    C -->|是| E{"node.backuped?"}
+    E -->|是| F["已有备份，跳过"]
+    E -->|否| G["write_backup(node)"]
+    G --> H["分配 host_indices"]
+    H --> I["cache_controller.write()<br/>GPU -> Host 传输"]
+    I --> J["inc_lock_ref(node)<br/>保护传输中的节点"]
+    J --> K["加入 ongoing_write_through"]
+    K --> L["writing_check() 轮询完成"]
+    L --> M{"传输完成?"}
+    M -->|是| N["dec_lock_ref(node)"]
+    N --> O{"enable_storage?"}
+    O -->|是| P["write_backup_storage(node)<br/>Host -> Storage"]
+    O -->|否| Q["完成"]
+    M -->|否| L
+    style A fill:#39d0d8,color:#0d1117
+    style I fill:#f78166,color:#0d1117
+    style P fill:#bc8cff,color:#0d1117
+</div>
+
+<h3>8.4 驱逐策略(三级)</h3>
+<div class="mermaid">
+flowchart TD
+    A["evict(num_tokens)"] --> B["_collect_leaves_device()"]
+    B --> C["构建驱逐堆"]
+    C --> D{" node.backuped?"}
+    D -->|是| E["_evict_backuped(node)<br/>仅释放GPU端<br/>node.value = None"]
+    D -->|否| F{"write_policy == write_back?"}
+    F -->|是| G["write_backup(node, write_back=True)<br/>先写入Host再驱逐"]
+    F -->|否| H["_evict_regular(node)<br/>直接释放GPU+删除节点"]
+    G --> I["writing_check(write_back=True)<br/>阻塞等待写入完成"]
+    I --> E
+
+    J["evict_host(num_tokens)"] --> K["收集已驱逐且有host_value的叶节点"]
+    K --> L["释放 host_value"]
+    L --> M["从树中删除节点"]
+
+    style A fill:#39d0d8,color:#0d1117
+    style E fill:#58a6ff,color:#0d1117
+    style H fill:#f85149,color:#0d1117
+</div>
+
+<h3>8.5 加载回填 (load_back)</h3>
+<pre><code>def load_back(self, node, mem_quota=None):
+    # 收集从当前驱逐节点到最近活跃祖先的所有待加载节点
+    nodes_to_load = []
+    while node.evicted:
+        nodes_to_load.insert(0, node)
+        node = node.parent
+    ancestor_node = node
+
+    # 保护祖先节点不被驱逐
+    self.inc_lock_ref(ancestor_node)
+
+    # 一次性加载所有 host_indices
+    host_indices = torch.cat([n.host_value for n in nodes_to_load])
+    device_indices = self.cache_controller.load(host_indices, node_id)
+
+    # 分配 device 端索引到各节点
+    offset = 0
+    for node in nodes_to_load:
+        node.value = device_indices[offset : offset + len(node.host_value)]
+        offset += len(node.host_value)
+
+    self.evictable_size_ += len(device_indices)
+    return device_indices</code></pre>
+
+<h3>8.6 前缀匹配扩展</h3>
+<p>HiRadixCache 重写了 <code>match_prefix</code>，同时返回 host 端的匹配信息：</p>
+<div class="mermaid">
+flowchart TD
+    A["match_prefix(key)"] --> B["_match_prefix_helper(root, key)<br/>(遍历时包含驱逐节点)"]
+    B --> C["value = GPU端匹配的value列表"]
+    C --> D["last_host_node = 最远有host_value的节点"]
+    D --> E["host_hit_length = 驱逐节点的host_value总长度"]
+    E --> F["返回 MatchResult<br/>(device_indices, last_device_node,<br/>last_host_node, host_hit_length)"]
+    style A fill:#39d0d8,color:#0d1117
+    style F fill:#3fb950,color:#0d1117
+</div>
+
+<h3>8.7 预取 (Prefetch from Storage)</h3>
+<div class="highlight">
+<strong>预取机制：</strong>当请求的 token 序列在外部存储中可能存在时，<code>prefetch_from_storage</code> 会提前将数据从外部存储加载到 Host 内存。支持三种停止策略：<code>best_effort</code>(尽力而为，立即可终止)、<code>wait_complete</code>(等待全部完成)、<code>timeout</code>(超时自动终止，超时时间随页数线性增长)。
+</div>
+
+<h2 id="storage">9. 外部存储后端</h2>
+<p>SGLang 通过 <code>StorageBackendFactory</code> 工厂模式支持 7 种外部存储后端，所有后端均继承自 <code>HiCacheStorage</code>。</p>
+
+<h3>9.1 后端注册</h3>
+<div class="mermaid">
+graph TB
+    SBF["StorageBackendFactory"] --> FILE["file<br/>HiCacheFile<br/>(本地文件系统)"]
+    SBF --> NIXL["nixl<br/>HiCacheNixl<br/>(NVIDIA NIXL RDMA)"]
+    SBF --> MC["mooncake<br/>MooncakeStore<br/>(Mooncake Transfer Engine)"]
+    SBF --> HF["hf3fs<br/>HiCacheHF3FS<br/>(3FS 分布式文件系统)"]
+    SBF --> AB["aibrix<br/>AibrixKVCacheStorage<br/>(AIBrix KV Cache)"]
+    SBF --> EIC["eic<br/>EICStorage<br/>(EIC 存储)"]
+    SBF --> DYN["dynamic<br/>动态加载<br/>(自定义后端)"]
+    style SBF fill:#39d0d8,color:#0d1117
+</div>
+
+<h3>9.2 后端注册机制</h3>
+<pre><code>class StorageBackendFactory:
+    _registry: Dict[str, Dict[str, Any]] = {}
+
+    @classmethod
+    def register_backend(cls, name, module_path, class_name):
+        """惰性注册：仅在实际创建时才 import 模块"""
+        def loader():
+            return cls._load_backend_class(module_path, class_name, name)
+        cls._registry[name] = {"loader": loader, ...}
+
+    @classmethod
+    def create_backend(cls, backend_name, storage_config, mem_pool_host, **kwargs):
+        if backend_name in cls._registry:
+            backend_class = cls._registry[backend_name]["loader"]()
+            return cls._create_builtin_backend(...)
+        elif backend_name == "dynamic":
+            return cls._create_dynamic_backend(...)  # 通过 extra_config 动态加载</code></pre>
+
+<h3>9.3 后端详细对比</h3>
+<div class="card">
+<table>
+<tr><th>后端</th><th>传输方式</th><th>特点</th><th>适用场景</th></tr>
+<tr><td><code>file</code></td><td>本地文件 I/O</td><td>最简单的实现，无需额外依赖</td><td>单机持久化</td></tr>
+<tr><td><code>nixl</code></td><td>NVIDIA NIXL RDMA</td><td>支持 clear 操作，高带宽 RDMA 传输</td><td>多节点 GPU 集群</td></tr>
+<tr><td><code>mooncake</code></td><td>Mooncake Transfer Engine</td><td>自定义 Host 内存分配器，零拷贝传输</td><td>大规模分布式推理</td></tr>
+<tr><td><code>hf3fs</code></td><td>3FS 分布式文件系统</td><td>支持多种内存布局(page_first/layer_first)</td><td>共享文件系统部署</td></tr>
+<tr><td><code>aibrix</code></td><td>AIBrix KV Cache 服务</td><td>云原生 KV Cache 管理</td><td>云服务部署</td></tr>
+<tr><td><code>eic</code></td><td>EIC 存储引擎</td><td>高性能存储加速</td><td>专用存储硬件</td></tr>
+<tr><td><code>dynamic</code></td><td>自定义</td><td>通过 extra_config 指定 module_path 和 class_name</td><td>自定义集成</td></tr>
+</table>
+</div>
+
+<h3>9.4 TP 同步</h3>
+<div class="highlight">
+<strong>张量并行一致性：</strong>HiRadixCache 中所有修改树结构的操作(write_through 完成、load_back、prefetch 终止)都需要在 TP worker 间同步。通过 <code>torch.distributed.all_reduce</code> 使用 <code>ReduceOp.MIN</code> 确保所有 rank 看到一致的完成队列大小，保证树结构的一致性。
+</div>
+
+<h2 id="common-ops">10. 缓存公共操作</h2>
+<p><code>common.py</code> 提供了缓存分配和写入的核心工具函数。</p>
+
+<h3>10.1 write_req_to_token_pool_triton</h3>
+<p>高性能 Triton kernel，将前缀索引和新分配的 KV 缓存位置写入 <code>req_to_token</code> 映射表。</p>
+<div class="mermaid">
+flowchart LR
+    subgraph "write_req_to_token_pool_triton"
+        P1["Phase 1: 写入 prefix<br/>req_to_token[idx, :pre_len] = prefix"]
+        P2["Phase 2: 写入 extend<br/>req_to_token[idx, pre_len:seq_len] = out_cache_loc"]
+    end
+    P1 --> P2
+    style P1 fill:#39d0d8,color:#0d1117
+    style P2 fill:#58a6ff,color:#0d1117
+</div>
+
+<h3>10.2 alloc_for_extend 完整分配流程</h3>
+<div class="mermaid">
+flowchart TD
+    A["alloc_for_extend(batch)"] --> B["maybe_evict_swa()<br/>释放滑动窗口外的token"]
+    B --> C["准备 prefix_lens, extend_lens"]
+    C --> D["alloc_req_slots()<br/>分配请求槽位"]
+    D --> E{"page_size == 1?"}
+    E -->|是| F["alloc_token_slots()<br/>逐token分配"]
+    E -->|否| G["alloc_paged_token_slots_extend()<br/>分页分配(含Triton kernel)"]
+    F --> H["write_cache_indices()<br/>写入 req_to_token 映射"]
+    G --> H
+    H --> I["返回 (out_cache_loc, req_pool_indices)"]
+    style A fill:#39d0d8,color:#0d1117
+    style H fill:#3fb950,color:#0d1117
+</div>
+
+<h3>10.3 evict_from_tree_cache</h3>
+<pre><code>def evict_from_tree_cache(tree_cache, num_tokens):
+    if tree_cache.is_chunk_cache():
+        return  # ChunkCache 不使用树驱逐
+
+    allocator = tree_cache.token_to_kv_pool_allocator
+
+    if hasattr(allocator, "full_available_size"):
+        # 混合分配器(SWA): 分别驱逐 full 和 swa 池
+        full_num = max(0, num_tokens - allocator.full_available_size())
+        swa_num = max(0, num_tokens - allocator.swa_available_size())
+        tree_cache.evict(full_num, swa_num)
+    else:
+        # 标准分配器
+        if allocator.available_size() < num_tokens:
+            tree_cache.evict(num_tokens)</code></pre>
+
+<h3>10.4 release_kv_cache</h3>
+<div class="mermaid">
+flowchart TD
+    A["release_kv_cache(req, tree_cache)"] --> B["tree_cache.cache_finished_req(req)"]
+    B --> C["pop_overallocated_kv_cache()"]
+    C --> D{"有过度分配?"}
+    D -->|是| E["释放 req_to_token[start_p:end_p]"]
+    D -->|否| F["完成"]
+    E --> F
+    style A fill:#39d0d8,color:#0d1117
+</div>
+
+<h2 id="lifecycle">11. 请求缓存生命周期</h2>
+
+<h3>11.1 完整生命周期</h3>
+<div class="mermaid">
+sequenceDiagram
+    participant SP as SchedulePolicy
+    participant RC as RadixCache
+    participant ALLOC as Allocator
+    participant KVC as KVCache
+
+    Note over SP: 请求进入等待队列
+    SP->>RC: match_prefix(key)
+    RC-->>SP: MatchResult (prefix_indices, last_node)
+    SP->>RC: inc_lock_ref(last_node)
+    Note over SP: 锁定匹配前缀
+
+    SP->>ALLOC: alloc(extend_num_tokens)
+    ALLOC-->>SP: out_cache_loc
+    Note over SP: 分配新token的KV槽位
+
+    loop 每次 forward
+        Note over KVC: model.forward() 写入 KV
+        KVC->>KVC: set_kv_buffer(loc, k, v)
+    end
+
+    alt 请求未完成 (chunked prefill)
+        SP->>RC: cache_unfinished_req(req)
+        RC->>RC: insert(keys, values)
+        RC->>RC: dec_lock_ref(old_node)
+        RC->>RC: inc_lock_ref(new_node)
+    else 请求完成
+        SP->>RC: cache_finished_req(req)
+        RC->>RC: insert(keys, values) 插入完整序列
+        RC->>ALLOC: free(重复索引) 释放已存在于树中的重复
+        RC->>RC: dec_lock_ref(last_node) 解锁
+        Note over RC: 节点变为可驱逐
+    end
+</div>
+
+<h3>11.2 cache_finished_req 详解</h3>
+<pre><code>def cache_finished_req(self, req, is_insert=True):
+    kv_committed_len = req.pop_committed_kv_cache()
+    token_ids = (req.origin_input_ids + req.output_ids)[:kv_committed_len]
+    kv_indices = self.req_to_token_pool.req_to_token[req.req_pool_idx, :len(token_ids)]
+
+    keys = self._page_align_keys(req.fill_ids)
+    values = kv_indices[:len(keys)].to(dtype=torch.int64, copy=True)
+    radix_key = RadixKey(keys, req.extra_key)
+
+    if is_insert:
+        new_prefix_len = self.insert(radix_key, values, priority=req.priority)
+        # 释放已在树中存在的重复索引
+        self.token_to_kv_pool_allocator.free(
+            kv_indices[req.cache_protected_len : new_prefix_len]
+        )
+
+    # 释放未对齐的尾部
+    self.token_to_kv_pool_allocator.free(kv_indices[len(keys):])
+    # 释放请求槽位并解锁
+    self.req_to_token_pool.free(req.req_pool_idx)
+    self.dec_lock_ref(req.last_node)</code></pre>
+
+<h3>11.3 cache_unfinished_req (Chunked Prefill)</h3>
+<div class="mermaid">
+flowchart TD
+    A["cache_unfinished_req(req)"] --> B["insert(keys, values)<br/>插入当前已计算的部分"]
+    B --> C["free(重复索引)<br/>释放已在树中的部分"]
+    C --> D["match_prefix(radix_key)<br/>重新匹配获取最新indices"]
+    D --> E["write() 更新 req_to_token 映射"]
+    E --> F["dec_lock_ref(old_node)<br/>解锁旧节点"]
+    F --> G["inc_lock_ref(new_node)<br/>锁定新节点"]
+    G --> H["更新 req.prefix_indices<br/>和 req.cache_protected_len"]
+    style A fill:#39d0d8,color:#0d1117
+    style D fill:#58a6ff,color:#0d1117
+</div>
+
+<h2 id="summary">12. 总结</h2>
+<div class="card">
+<h4>SGLang 缓存系统核心设计要点</h4>
+<ul>
+<li><strong>Radix Tree 前缀缓存：</strong>通过共享公共前缀节点，实现 O(n) 的前缀匹配和高效的 KV 缓存复用，支持节点分裂以精确匹配任意长度前缀</li>
+<li><strong>三级内存池层次：</strong>ReqToTokenPool(请求映射) -> TokenToKVPoolAllocator(索引管理) -> KVCache(物理存储)，各司其职，层次分明</li>
+<li><strong>多种 KVCache 类型：</strong>MHATokenToKVPool(标准K/V分离)、MLATokenToKVPool(MLA联合压缩)、FP4变体、SWA双池 等针对不同模型架构的优化实现</li>
+<li><strong>分页分配器：</strong>PagedTokenToKVPoolAllocator 通过 Triton kernel(alloc_extend_kernel/alloc_decode_kernel)实现高效的三段式分页分配</li>
+<li><strong>6 种驱逐策略：</strong>LRU/LFU/FIFO/MRU/FILO/Priority 可插拔设计，基于最小堆的驱逐执行支持级联(父节点自动加入堆)</li>
+<li><strong>lock_ref 保护机制：</strong>路径级引用计数确保正在使用的前缀缓存不会被驱逐，安全与效率并重</li>
+<li><strong>HiRadixCache 分层缓存：</strong>GPU + Host + External Storage 三级存储层次，支持 write_through/write_back 写策略和异步加载回填</li>
+<li><strong>7 种外部存储后端：</strong>file/nixl/mooncake/hf3fs/aibrix/eic/dynamic，通过工厂模式惰性加载，支持自定义后端动态注册</li>
+<li><strong>TP 一致性保障：</strong>HiRadixCache 通过 all_reduce 同步确保所有 TP rank 的树结构一致</li>
+<li><strong>EAGLE bigram 支持：</strong>通过 RadixKey 的 is_bigram 标志和 convert_to_bigram_key 转换，适配 EAGLE 投机解码的特殊缓存键格式</li>
+<li><strong>SHA256 链式哈希：</strong>compute_node_hash_values 为每个页面生成位置感知的哈希标识，支持跨实例的缓存识别和外部存储索引</li>
+</ul>
+</div>
+
+</main>
+</div>
+<script>mermaid.initialize({startOnLoad:true,theme:'dark'});</script>
+</body>
+</html>

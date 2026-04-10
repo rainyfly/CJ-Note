@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang Scheduler 调度系统深度解析">
+  <meta name="report-type"  content="repo">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang Scheduler 调度系统深度解析">
+  <meta name="report-type"  content="sglang">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+<title>SGLang Scheduler 调度系统深度解析</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}:root{--bg:#0d1117;--bg2:#161b22;--bg3:#1c2128;--border:#30363d;--text:#e6edf3;--text2:#8b949e;--text3:#656d76;--cyan:#39d0d8;--blue:#58a6ff;--green:#3fb950;--yellow:#e3b341;--orange:#f78166;--purple:#bc8cff;--red:#f85149;--font-mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace}html{scroll-behavior:smooth}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif;background:var(--bg);color:var(--text);line-height:1.75;font-size:16px}.page-wrap{display:grid;grid-template-columns:260px 1fr;min-height:100vh}@media(max-width:900px){.page-wrap{grid-template-columns:1fr}.sidebar{display:none}}.sidebar{position:sticky;top:0;height:100vh;overflow-y:auto;background:var(--bg2);border-right:1px solid var(--border);padding:24px 16px}.sidebar-brand{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:16px}.toc a{display:block;padding:6px 8px;font-size:13px;color:var(--text2);text-decoration:none;border-radius:6px;margin-bottom:2px}.toc a:hover{background:var(--bg3);color:var(--cyan)}main{max-width:960px;margin:0 auto;padding:48px 32px}h1{font-size:2.2rem;margin-bottom:8px;background:linear-gradient(135deg,var(--cyan),var(--blue));-webkit-background-clip:text;-webkit-text-fill-color:transparent}.subtitle{color:var(--text2);font-size:1rem;margin-bottom:40px}h2{font-size:1.5rem;color:var(--cyan);margin:48px 0 16px;padding-bottom:8px;border-bottom:1px solid var(--border)}h3{font-size:1.15rem;color:var(--blue);margin:32px 0 12px}h4{font-size:1rem;color:var(--purple);margin:24px 0 8px}p,li{margin-bottom:12px}ul,ol{padding-left:24px}a{color:var(--blue);text-decoration:none}.card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px;margin:16px 0}table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px}th,td{padding:10px 14px;text-align:left;border:1px solid var(--border)}th{background:var(--bg3);color:var(--cyan)}td{background:var(--bg2)}code{font-family:var(--font-mono);background:var(--bg3);padding:2px 6px;border-radius:4px;font-size:0.9em;color:var(--orange)}pre{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:16px;overflow-x:auto;margin:16px 0;font-size:13px}pre code{background:none;padding:0;color:var(--text)}.mermaid{background:var(--bg2);border-radius:12px;padding:20px;margin:16px 0;display:flex;justify-content:center}.highlight{background:rgba(57,208,216,0.08);border-left:3px solid var(--cyan);padding:16px 20px;border-radius:0 8px 8px 0;margin:16px 0}
+</style>
+</head>
+<body>
+<div class="page-wrap">
+<nav class="sidebar">
+<div class="sidebar-brand">SGLang Research</div>
+<div class="toc">
+<a href="#overview">1. 系统总览</a>
+<a href="#architecture">2. 架构设计</a>
+<a href="#event-loop">3. 事件循环</a>
+<a href="#continuous-batching">4. 连续批处理</a>
+<a href="#schedule-batch">5. ScheduleBatch</a>
+<a href="#schedule-policy">6. 调度策略</a>
+<a href="#tokenizer-mgr">7. TokenizerManager</a>
+<a href="#detokenizer-mgr">8. DetokenizerManager</a>
+<a href="#dp-controller">9. DP Controller</a>
+<a href="#overlap">10. 重叠调度</a>
+<a href="#data-flow">11. 数据流转</a>
+<a href="#summary">12. 总结</a>
+</div>
+</nav>
+<main>
+
+<h1>SGLang Scheduler 调度系统</h1>
+<p class="subtitle">深入分析事件循环、连续批处理、Prefill/Decode调度、调度策略及多进程通信机制</p>
+
+<!-- Section 1 -->
+<h2 id="overview">1. 系统总览</h2>
+<p>SGLang 的调度系统是整个推理引擎的核心，负责管理请求的生命周期、GPU 资源分配与计算调度。调度系统由多个协作进程组成，通过 ZMQ 进行高效的进程间通信。</p>
+
+<div class="card">
+<h4>核心组件一览</h4>
+<table>
+<tr><th>组件</th><th>文件</th><th>职责</th></tr>
+<tr><td><code>Scheduler</code></td><td>scheduler.py</td><td>核心调度器，管理 GPU worker，执行事件循环</td></tr>
+<tr><td><code>ScheduleBatch</code></td><td>schedule_batch.py</td><td>批次数据结构，请求(Req)容器</td></tr>
+<tr><td><code>SchedulePolicy</code></td><td>schedule_policy.py</td><td>调度策略实现 (LPM/FCFS/Random 等)</td></tr>
+<tr><td><code>TokenizerManager</code></td><td>tokenizer_manager.py</td><td>异步分词进程，请求入口</td></tr>
+<tr><td><code>DetokenizerManager</code></td><td>detokenizer_manager.py</td><td>反分词进程，输出处理</td></tr>
+<tr><td><code>DataParallelController</code></td><td>data_parallel_controller.py</td><td>数据并行分发控制器</td></tr>
+</table>
+</div>
+
+<!-- Section 2 -->
+<h2 id="architecture">2. 架构设计</h2>
+<p>SGLang 采用多进程架构，各组件通过 ZMQ socket 连接。<code>Scheduler</code> 继承了多个 Mixin 类以实现模块化设计：</p>
+
+<div class="mermaid">
+graph TB
+    subgraph "Scheduler Mixin 继承体系"
+        S[Scheduler] --> M1[SchedulerOutputProcessorMixin]
+        S --> M2[SchedulerUpdateWeightsMixin]
+        S --> M3[SchedulerProfilerMixin]
+        S --> M4[SchedulerMetricsMixin]
+        S --> M5[SchedulerDisaggregationDecodeMixin]
+        S --> M6[SchedulerDisaggregationPrefillMixin]
+        S --> M7[SchedulerMultiplexMixin]
+        S --> M8[SchedulerRuntimeCheckerMixin]
+        S --> M9[SchedulerPPMixin]
+        S --> M10[SchedulerDPAttnMixin]
+    end
+    style S fill:#39d0d8,color:#0d1117,stroke:#39d0d8
+</div>
+
+<div class="highlight">
+<strong>设计亮点：</strong>Scheduler 通过 Mixin 模式将不同功能维度分离到独立模块中，包括输出处理、权重更新、性能分析、指标收集、分离式推理(Disaggregation)、流水线并行(PP)和数据并行注意力(DP Attention)等。
+</div>
+
+<h3>进程间通信架构</h3>
+<div class="mermaid">
+graph LR
+    Client["客户端请求"] --> TM["TokenizerManager<br/>(异步分词)"]
+    TM -->|"ZMQ PUSH"| DP{"DataParallelController<br/>(可选)"}
+    DP -->|"ZMQ PUSH"| S1["Scheduler #0"]
+    DP -->|"ZMQ PUSH"| S2["Scheduler #1"]
+    S1 -->|"ZMQ PUSH"| DT["DetokenizerManager<br/>(反分词)"]
+    S2 -->|"ZMQ PUSH"| DT
+    DT -->|"ZMQ PUSH"| TM
+    TM --> Client
+
+    style TM fill:#58a6ff,color:#0d1117
+    style DP fill:#bc8cff,color:#0d1117
+    style S1 fill:#39d0d8,color:#0d1117
+    style S2 fill:#39d0d8,color:#0d1117
+    style DT fill:#3fb950,color:#0d1117
+</div>
+
+<!-- Section 3 -->
+<h2 id="event-loop">3. 事件循环</h2>
+<p>Scheduler 提供两种事件循环模式：普通模式和重叠(Overlap)模式。</p>
+
+<h3>3.1 普通事件循环 (event_loop_normal)</h3>
+<div class="mermaid">
+flowchart TD
+    A["开始循环"] --> B["recv_requests()<br/>接收请求"]
+    B --> C["process_input_requests()<br/>处理输入请求"]
+    C --> D{"引擎是否暂停?"}
+    D -->|是| A
+    D -->|否| E["get_next_batch_to_run()<br/>获取下一个批次"]
+    E --> F{"batch 非空?"}
+    F -->|是| G["run_batch(batch)<br/>执行批次"]
+    G --> H["process_batch_result()<br/>处理结果"]
+    H --> I["更新 last_batch"]
+    F -->|否| J["self_check_during_idle()<br/>空闲自检"]
+    J --> I
+    I --> A
+
+    style A fill:#39d0d8,color:#0d1117
+    style G fill:#f78166,color:#0d1117
+    style E fill:#58a6ff,color:#0d1117
+</div>
+
+<h3>3.2 重叠调度模式 (event_loop_overlap)</h3>
+<p>重叠模式的核心思想是：在 GPU 执行当前批次的同时，CPU 处理上一个批次的结果，实现 CPU/GPU 计算重叠。</p>
+
+<div class="mermaid">
+sequenceDiagram
+    participant CPU as CPU调度
+    participant GPU as GPU计算
+    participant Queue as 结果队列
+
+    loop 每次迭代
+        CPU->>CPU: recv_requests() + process_input_requests()
+        CPU->>CPU: get_next_batch_to_run() -> batch_N
+        CPU->>GPU: run_batch(batch_N) [异步]
+        GPU-->>Queue: (batch_N, result_N) 入队
+        CPU->>Queue: pop batch_N-1 结果
+        CPU->>CPU: process_batch_result(batch_N-1)
+        CPU->>CPU: launch_batch_sample_if_needed()
+    end
+</div>
+
+<div class="card">
+<h4>重叠调度关键约束</h4>
+<ul>
+<li>连续两个 prefill 批次时禁用重叠（由 <code>SGLANG_DISABLE_CONSECUTIVE_PREFILL_OVERLAP</code> 控制）以改善首 token 延迟</li>
+<li>投机解码 + 语法约束的场景暂不支持重叠模式</li>
+<li>使用 <code>FutureMap</code> 管理异步前向结果</li>
+</ul>
+</div>
+
+<!-- Section 4 -->
+<h2 id="continuous-batching">4. 连续批处理</h2>
+<p>SGLang 实现了高效的连续批处理(Continuous Batching)，将 Prefill 和 Decode 请求动态组合成批次。</p>
+
+<h3>4.1 get_next_batch_to_run 流程</h3>
+<div class="mermaid">
+flowchart TD
+    A["get_next_batch_to_run()"] --> B{"waiting_queue<br/>非空?"}
+    B -->|是| C["get_new_prefill_batch()<br/>构建 prefill 批次"]
+    B -->|否| D{"running_batch<br/>非空?"}
+    C --> E{"新 prefill 批次<br/>非空?"}
+    E -->|是| F{"is_mixed_chunk?"}
+    F -->|是| G["合并 prefill + decode<br/>=> MIXED 模式"]
+    F -->|否| H["纯 prefill 批次"]
+    E -->|否| D
+    D -->|是| I["get_running_batch()<br/>获取 decode 批次"]
+    D -->|否| J["返回 None"]
+    G --> K["返回批次"]
+    H --> K
+    I --> K
+
+    style A fill:#39d0d8,color:#0d1117
+    style G fill:#bc8cff,color:#0d1117
+    style C fill:#58a6ff,color:#0d1117
+</div>
+
+<h3>4.2 Prefill / Decode / Mixed 模式</h3>
+<table>
+<tr><th>ForwardMode</th><th>含义</th><th>使用场景</th></tr>
+<tr><td><code>EXTEND</code></td><td>扩展序列(prefill)</td><td>系统提示已缓存，继续计算</td></tr>
+<tr><td><code>DECODE</code></td><td>逐 token 解码</td><td>自回归生成</td></tr>
+<tr><td><code>MIXED</code></td><td>混合 prefill+decode</td><td>chunked prefill 启用时</td></tr>
+<tr><td><code>IDLE</code></td><td>空闲(DP attention用)</td><td>当前 worker 无分配序列</td></tr>
+<tr><td><code>TARGET_VERIFY</code></td><td>投机解码验证</td><td>目标模型验证草稿 token</td></tr>
+<tr><td><code>DRAFT_EXTEND</code></td><td>草稿模型扩展</td><td>EAGLE 等投机解码</td></tr>
+</table>
+
+<h3>4.3 Chunked Prefill</h3>
+<p>当启用 chunked prefill 时，长序列的 prefill 会被分成多个 chunk 逐步执行，避免长序列独占 GPU。关键参数：</p>
+<ul>
+<li><code>chunked_prefill_size</code>: 每次 prefill 的最大 token 数</li>
+<li><code>enable_mixed_chunk</code>: 允许 chunk 与 decode 混合执行</li>
+<li><code>enable_dynamic_chunking</code>: 流水线并行下的动态分块</li>
+</ul>
+
+<!-- Section 5 -->
+<h2 id="schedule-batch">5. ScheduleBatch 数据结构</h2>
+<p>数据流经三层变换：<code>ScheduleBatch -&gt; ModelWorkerBatch -&gt; ForwardBatch</code>。</p>
+
+<div class="mermaid">
+flowchart LR
+    SB["ScheduleBatch<br/>(CPU, 高层调度数据)"] -->|"prepare_for_*"| MWB["ModelWorkerBatch<br/>(CPU->GPU 过渡)"]
+    MWB -->|"ForwardBatch.init_new()"| FB["ForwardBatch<br/>(GPU Tensor 数据)"]
+
+    style SB fill:#39d0d8,color:#0d1117
+    style MWB fill:#58a6ff,color:#0d1117
+    style FB fill:#3fb950,color:#0d1117
+</div>
+
+<h3>5.1 Req (请求对象)</h3>
+<div class="card">
+<p><code>Req</code> 是单个请求的完整状态载体，包含：</p>
+<table>
+<tr><th>字段</th><th>类型</th><th>描述</th></tr>
+<tr><td><code>rid</code></td><td>str</td><td>请求唯一标识</td></tr>
+<tr><td><code>origin_input_ids</code></td><td>List[int]</td><td>原始输入 token IDs</td></tr>
+<tr><td><code>output_ids</code></td><td>List[int]</td><td>已生成的输出 token IDs</td></tr>
+<tr><td><code>sampling_params</code></td><td>SamplingParams</td><td>采样参数(温度、top_p等)</td></tr>
+<tr><td><code>prefix_indices</code></td><td>Tensor</td><td>前缀缓存匹配的 KV 索引</td></tr>
+<tr><td><code>last_node</code></td><td>TreeNode</td><td>RadixTree 中最后匹配节点</td></tr>
+<tr><td><code>req_pool_idx</code></td><td>int</td><td>请求在 ReqToTokenPool 中的索引</td></tr>
+<tr><td><code>finished_reason</code></td><td>BaseFinishReason</td><td>完成原因(stop/length/abort)</td></tr>
+</table>
+</div>
+
+<h3>5.2 完成原因类层次</h3>
+<div class="mermaid">
+classDiagram
+    class BaseFinishReason {
+        +is_error: bool
+        +to_json()
+    }
+    class FINISH_MATCHED_TOKEN {
+        +matched: int|List
+    }
+    class FINISH_MATCHED_STR {
+        +matched: str
+    }
+    class FINISH_LENGTH {
+        +length: int
+    }
+    class FINISH_ABORT {
+        +message: str
+        +status_code
+    }
+    BaseFinishReason <|-- FINISH_MATCHED_TOKEN
+    BaseFinishReason <|-- FINISH_MATCHED_STR
+    BaseFinishReason <|-- FINISH_LENGTH
+    BaseFinishReason <|-- FINISH_ABORT
+</div>
+
+<!-- Section 6 -->
+<h2 id="schedule-policy">6. 调度策略</h2>
+<p>SGLang 支持两大类调度策略：缓存感知策略和缓存无关策略。</p>
+
+<h3>6.1 策略分类</h3>
+<div class="mermaid">
+graph TB
+    SP["SchedulePolicy"] --> CA["CacheAwarePolicy<br/>(缓存感知)"]
+    SP --> CG["CacheAgnosticPolicy<br/>(缓存无关)"]
+    CA --> LPM["LPM<br/>最长前缀匹配"]
+    CA --> DFS["DFS-Weight<br/>深度优先搜索加权"]
+    CG --> FCFS["FCFS<br/>先来先服务"]
+    CG --> LOF["LOF<br/>最长输出优先"]
+    CG --> RND["Random<br/>随机"]
+    CG --> RK["Routing-Key<br/>路由键频率"]
+
+    style SP fill:#39d0d8,color:#0d1117
+    style CA fill:#58a6ff,color:#0d1117
+    style CG fill:#3fb950,color:#0d1117
+</div>
+
+<table>
+<tr><th>策略</th><th>类别</th><th>排序键</th><th>优势</th></tr>
+<tr><td>LPM</td><td>缓存感知</td><td>前缀匹配长度(降序)</td><td>最大化 KV 缓存复用</td></tr>
+<tr><td>DFS-Weight</td><td>缓存感知</td><td>RadixTree 深度优先权重</td><td>批量处理相似请求</td></tr>
+<tr><td>FCFS</td><td>缓存无关</td><td>到达时间</td><td>公平、低延迟</td></tr>
+<tr><td>LOF</td><td>缓存无关</td><td>max_new_tokens(降序)</td><td>优先处理长输出</td></tr>
+<tr><td>Random</td><td>缓存无关</td><td>随机打乱</td><td>负载均匀</td></tr>
+<tr><td>Routing-Key</td><td>缓存无关</td><td>运行批次中路由键频率</td><td>专家混合优化</td></tr>
+</table>
+
+<h3>6.2 In-Batch Prefix Caching</h3>
+<div class="highlight">
+<strong>核心优化：</strong>当等待队列中多个请求共享相同前缀但现有缓存中没有该前缀时，调度器会临时降低后续请求的优先级，仅调度其中一个请求先行 prefill，后续请求可复用新建的缓存。阈值由 <code>IN_BATCH_PREFIX_CACHING_CHECK_THRESHOLD</code>（默认32）和 <code>IN_BATCH_PREFIX_CACHING_DEPRIORITIZE_THRESHOLD</code>（默认32）控制。
+</div>
+
+<h3>6.3 PrefillAdder - 预算管理</h3>
+<p><code>PrefillAdder</code> 负责根据可用内存预算将等待队列中的请求添加到 prefill 批次中。</p>
+<div class="mermaid">
+flowchart TD
+    A["PrefillAdder.add_one_req()"] --> B["计算 prefix_len 和 extend_len"]
+    B --> C{"budget_state() == NO_TOKEN?"}
+    C -->|是| D["返回 NO_TOKEN，停止添加"]
+    C -->|否| E{"需要驱逐缓存?"}
+    E -->|是| F["evict_from_tree_cache()"]
+    E -->|否| G["alloc_for_extend() 分配 KV 内存"]
+    F --> G
+    G --> H{"分配成功?"}
+    H -->|是| I["加入 can_run_list"]
+    H -->|否| J{"需要 retract?"}
+    J -->|是| K["抢占低优先级请求"]
+    J -->|否| D
+    K --> G
+    I --> L["返回 CONTINUE"]
+
+    style A fill:#39d0d8,color:#0d1117
+    style I fill:#3fb950,color:#0d1117
+    style D fill:#f85149,color:#0d1117
+</div>
+
+<p>关键预算计算：</p>
+<ul>
+<li><code>rem_total_tokens</code>: 可用+可驱逐的 token 数 - 已运行请求预留</li>
+<li><code>rem_input_tokens</code>: 剩余可用的 prefill token 配额</li>
+<li><code>rem_chunk_tokens</code>: chunked prefill 时单次最大 token 数</li>
+<li><code>new_token_ratio</code>: 为 decode 阶段新 token 预留的比例(动态衰减)</li>
+</ul>
+
+<!-- Section 7 -->
+<h2 id="tokenizer-mgr">7. TokenizerManager</h2>
+<p><code>TokenizerManager</code> 是请求进入系统的第一个处理进程，运行在独立进程中，使用 uvloop 异步事件循环。</p>
+
+<div class="mermaid">
+sequenceDiagram
+    participant API as FastAPI Server
+    participant TM as TokenizerManager
+    participant S as Scheduler
+    participant DT as DetokenizerManager
+
+    API->>TM: generate_request(text, params)
+    TM->>TM: tokenize(text) -> input_ids
+    TM->>TM: 处理多模态数据
+    TM->>TM: 验证输入长度
+    TM->>S: send TokenizedGenerateReqInput [ZMQ]
+    Note over TM: 创建 ReqState, 等待 event
+    S-->>DT: BatchTokenIDOutput [ZMQ]
+    DT-->>TM: BatchStrOutput [ZMQ]
+    TM->>TM: 更新 ReqState
+    TM->>API: 返回流式/完整响应
+</div>
+
+<div class="card">
+<h4>TokenizerManager 关键功能</h4>
+<ul>
+<li><strong>异步分词：</strong>使用 <code>AsyncDynamicbatchTokenizer</code> 对请求进行批量分词</li>
+<li><strong>多模态处理：</strong>通过 <code>AsyncMMDataProcessor</code> 异步处理图像/视频/音频</li>
+<li><strong>请求状态管理：</strong><code>ReqState</code> 维护每个请求的中间状态和增量输出</li>
+<li><strong>流式输出：</strong>通过 <code>asyncio.Event</code> 实现非阻塞等待和增量推送</li>
+<li><strong>LoRA 注册表：</strong>管理 LoRA adapter 的加载和选择</li>
+</ul>
+</div>
+
+<!-- Section 8 -->
+<h2 id="detokenizer-mgr">8. DetokenizerManager</h2>
+<p><code>DetokenizerManager</code> 负责将 Scheduler 生成的 token IDs 转换回文本。</p>
+
+<h3>8.1 事件循环</h3>
+<pre><code>def event_loop(self):
+    while True:
+        recv_obj = self.recv_from_scheduler.recv_pyobj()
+        output = self._request_dispatcher(recv_obj)
+        if output is not None:
+            self.send_to_tokenizer.send_pyobj(output)</code></pre>
+
+<h3>8.2 增量解码</h3>
+<p><code>DecodeStatus</code> 跟踪每个请求的增量解码状态：</p>
+<table>
+<tr><th>字段</th><th>描述</th></tr>
+<tr><td><code>decoded_text</code></td><td>已解码的完整文本</td></tr>
+<tr><td><code>decode_ids</code></td><td>已解码的 token IDs</td></tr>
+<tr><td><code>surr_offset</code></td><td>代理字符偏移(处理不完整 UTF-8)</td></tr>
+<tr><td><code>read_offset</code></td><td>已读取的文本偏移</td></tr>
+<tr><td><code>sent_offset</code></td><td>已发送给 tokenizer 的偏移</td></tr>
+</table>
+
+<h3>8.3 请求分发</h3>
+<div class="mermaid">
+graph LR
+    R["recv_obj"] --> D{"TypeBasedDispatcher"}
+    D -->|BatchEmbeddingOutput| E1["直接转发<br/>(无需解码)"]
+    D -->|BatchTokenIDOutput| E2["handle_batch_token_id_out<br/>(增量解码)"]
+    D -->|BatchMultimodalDecodeReq| E3["多模态解码"]
+    D -->|FreezeGCReq| E4["GC控制"]
+
+    style D fill:#39d0d8,color:#0d1117
+</div>
+
+<div class="highlight">
+<strong>性能优化：</strong><code>_grouped_batch_decode</code> 方法将具有相同 <code>skip_special_tokens</code> 和 <code>spaces_between_special_tokens</code> 设置的请求分组批量解码，减少 tokenizer 调用次数。<code>LimitedCapacityDict</code> 限制最大状态数(默认65536)防止内存泄漏。
+</div>
+
+<!-- Section 9 -->
+<h2 id="dp-controller">9. DataParallelController</h2>
+<p><code>DataParallelController</code> 在数据并行模式下分发请求到多个 Scheduler worker。</p>
+
+<h3>9.1 负载均衡方法</h3>
+<div class="mermaid">
+graph TB
+    LB["LoadBalanceMethod"] --> RR["ROUND_ROBIN<br/>轮询"]
+    LB --> FB["FOLLOW_BOOTSTRAP_ROOM<br/>跟随引导"]
+    LB --> TR["TOTAL_REQUESTS<br/>最少请求数"]
+    LB --> TT["TOTAL_TOKENS<br/>最少 token 数"]
+
+    style LB fill:#39d0d8,color:#0d1117
+</div>
+
+<table>
+<tr><th>方法</th><th>策略</th><th>适用场景</th></tr>
+<tr><td>ROUND_ROBIN</td><td>循环分配</td><td>均匀负载</td></tr>
+<tr><td>TOTAL_REQUESTS</td><td>选择当前请求数最少的 worker</td><td>请求量差异大</td></tr>
+<tr><td>TOTAL_TOKENS</td><td>选择当前 token 数最少的 worker(请求数做 tiebreaker)</td><td>序列长度差异大</td></tr>
+<tr><td>FOLLOW_BOOTSTRAP_ROOM</td><td>用于 disaggregation 模式</td><td>分离式推理</td></tr>
+</table>
+
+<h3>9.2 DPBudget 预算跟踪</h3>
+<p><code>DPBudget</code> 维护每个 DP worker 的实时负载信息，通过 <code>WatchLoadUpdateReq</code> 消息持续更新。分发时会乐观地递增目标 worker 的计数器，避免短时间内重复分配到同一 worker。</p>
+
+<!-- Section 10 -->
+<h2 id="overlap">10. 重叠调度详解</h2>
+<p>重叠调度使用 CUDA Stream 分离 GPU 计算和 CPU 调度。</p>
+
+<h3>10.1 Stream 设计</h3>
+<table>
+<tr><th>Stream</th><th>用途</th></tr>
+<tr><td><code>default_stream</code></td><td>默认 CUDA stream</td></tr>
+<tr><td><code>forward_stream</code></td><td>模型前向计算</td></tr>
+<tr><td><code>copy_stream</code></td><td>CPU-GPU 数据拷贝</td></tr>
+</table>
+
+<h3>10.2 new_token_ratio 动态衰减</h3>
+<p>为 decode 阶段预留内存的比例从 <code>init_new_token_ratio</code> 逐步衰减到 <code>min_new_token_ratio</code>，避免过度保守导致吞吐量下降：</p>
+<pre><code># 初始化
+init_new_token_ratio = SGLANG_INIT_NEW_TOKEN_RATIO * schedule_conservativeness
+min_new_token_ratio = init_new_token_ratio * SGLANG_MIN_NEW_TOKEN_RATIO_FACTOR
+new_token_ratio_decay = (init - min) / SGLANG_NEW_TOKEN_RATIO_DECAY_STEPS
+
+# 每步衰减
+new_token_ratio = max(new_token_ratio - decay, min_new_token_ratio)
+# retract 时重置
+new_token_ratio = init_new_token_ratio</code></pre>
+
+<!-- Section 11 -->
+<h2 id="data-flow">11. 完整数据流</h2>
+<div class="mermaid">
+sequenceDiagram
+    participant C as Client
+    participant TM as TokenizerManager
+    participant DP as DP Controller
+    participant SC as Scheduler
+    participant MW as ModelWorker
+    participant DT as DetokenizerManager
+
+    C->>TM: HTTP Request (text + params)
+    TM->>TM: tokenize -> input_ids
+    TM->>DP: TokenizedGenerateReqInput
+    DP->>SC: 路由到最优 worker
+    SC->>SC: waiting_queue.append(Req)
+
+    loop 事件循环
+        SC->>SC: get_next_batch_to_run()
+        SC->>SC: ScheduleBatch -> ModelWorkerBatch
+        SC->>MW: forward(ModelWorkerBatch)
+        MW->>MW: ForwardBatch.init_new() -> GPU计算
+        MW-->>SC: LogitsProcessorOutput
+        SC->>SC: sample + process_batch_result
+        SC->>DT: BatchTokenIDOutput
+    end
+
+    DT->>DT: 增量解码 token_ids -> text
+    DT->>TM: BatchStrOutput
+    TM->>C: 流式/完整响应
+</div>
+
+<!-- Section 12 -->
+<h2 id="summary">12. 总结</h2>
+<div class="card">
+<h4>SGLang 调度系统的核心创新</h4>
+<ul>
+<li><strong>连续批处理：</strong>动态合并 prefill/decode 请求，最大化 GPU 利用率</li>
+<li><strong>RadixTree 前缀缓存：</strong>通过 LPM 策略最大化 KV 缓存复用</li>
+<li><strong>In-Batch Prefix Caching：</strong>等待队列内的前缀去重优化</li>
+<li><strong>重叠调度：</strong>CPU/GPU 计算重叠，隐藏调度开销</li>
+<li><strong>动态 token ratio：</strong>自适应内存预留策略</li>
+<li><strong>多级并行：</strong>支持 TP、PP、DP、DP-Attention 多种并行模式</li>
+<li><strong>Mixin 模块化：</strong>通过继承 Mixin 实现功能正交分离</li>
+<li><strong>ZMQ 进程间通信：</strong>高效的多进程协作架构</li>
+</ul>
+</div>
+
+</main>
+</div>
+<script>mermaid.initialize({startOnLoad:true,theme:'dark'});</script>
+</body>
+</html>

@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>vLLM 量化支持深度解析 — CJ-Note</title>
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="vLLM 量化支持深度解析">
+  <meta name="report-type"  content="repo">
+  <meta name="report-date"  content="2026-04-10">
+  <meta name="report-tags"  content="vllm, framework">
+  <meta name="report-desc"  content="FP8/AWQ/GPTQ/Marlin 等量化方法原理、CUDA 内核实现、模型层量化集成与 KV Cache FP8 详解">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #0d1117; --surface: #161b22; --border: #30363d;
+      --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+      --green: #3fb950; --yellow: #d29922; --red: #f85149;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font-sans);
+           line-height: 1.7; padding: 0 1rem; }
+    .page-wrap { max-width: 900px; margin: 0 auto; padding: 2rem 0 4rem; }
+
+    /* Header */
+    .report-header { border-bottom: 1px solid var(--border); padding-bottom: 1.5rem; margin-bottom: 2rem; }
+    .report-header h1 { font-size: 1.9rem; color: var(--accent); margin-bottom: .5rem; }
+    .meta { color: var(--muted); font-size: .85rem; display: flex; gap: 1.5rem; flex-wrap: wrap; }
+    .meta span::before { content: "• "; }
+    .meta span:first-child::before { content: ""; }
+    .back-link { display: inline-block; margin-bottom: 1rem; color: var(--muted);
+                 text-decoration: none; font-size: .85rem; }
+    .back-link:hover { color: var(--accent); }
+
+    /* Sections */
+    h2 { font-size: 1.3rem; color: var(--text); margin: 2.5rem 0 .8rem;
+         padding-bottom: .4rem; border-bottom: 1px solid var(--border); }
+    h3 { font-size: 1.05rem; color: var(--accent); margin: 1.5rem 0 .5rem; }
+    h4 { font-size: .95rem; color: var(--muted); margin: 1rem 0 .3rem; text-transform: uppercase;
+         letter-spacing: .05em; }
+    p { margin-bottom: 1rem; color: var(--text); }
+
+    /* TL;DR box */
+    .tldr { background: var(--surface); border: 1px solid var(--accent);
+            border-left: 4px solid var(--accent); border-radius: 6px;
+            padding: 1rem 1.2rem; margin: 1.5rem 0; }
+    .tldr h3 { color: var(--accent); margin: 0 0 .5rem; font-size: .9rem;
+               text-transform: uppercase; letter-spacing: .1em; }
+    .tldr ul { padding-left: 1.2rem; }
+    .tldr li { margin-bottom: .3rem; }
+
+    /* Key-value info grid */
+    .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                 gap: .75rem; margin: 1rem 0 1.5rem; }
+    .info-card { background: var(--surface); border: 1px solid var(--border);
+                 border-radius: 6px; padding: .8rem 1rem; }
+    .info-card .label { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em;
+                        color: var(--muted); margin-bottom: .3rem; }
+    .info-card .value { font-size: 1.1rem; font-weight: 600; color: var(--accent);
+                        font-family: var(--font-mono); }
+
+    /* Code blocks */
+    pre { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+          padding: 1rem 1.2rem; overflow-x: auto; margin: 1rem 0; font-size: .85rem;
+          font-family: var(--font-mono); line-height: 1.5; }
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 3px;
+           padding: .15em .4em; font-size: .85em; font-family: var(--font-mono); }
+    pre code { background: none; border: none; padding: 0; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .9rem; }
+    th { background: var(--surface); color: var(--muted); font-weight: 600; text-align: left;
+         padding: .6rem .8rem; border: 1px solid var(--border); font-size: .8rem;
+         text-transform: uppercase; letter-spacing: .04em; }
+    td { padding: .6rem .8rem; border: 1px solid var(--border); vertical-align: top; }
+    tr:nth-child(even) td { background: rgba(255,255,255,.02); }
+
+    /* Chart containers */
+    .chart-wrap { background: var(--surface); border: 1px solid var(--border);
+                  border-radius: 8px; padding: 1.2rem; margin: 1.2rem 0; }
+    .chart-wrap h4 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+                     letter-spacing: .05em; margin-bottom: .8rem; }
+    .chart-wrap canvas { max-height: 320px; }
+
+    /* Mermaid diagrams */
+    .diagram-wrap { background: var(--surface); border: 1px solid var(--border);
+                    border-radius: 8px; padding: 1.5rem; margin: 1.2rem 0;
+                    overflow-x: auto; text-align: center; }
+    .diagram-wrap h4 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+                       letter-spacing: .05em; margin-bottom: 1rem; text-align: left; }
+
+    /* Callout boxes */
+    .callout { border-radius: 6px; padding: .8rem 1rem; margin: 1rem 0;
+               border-left: 4px solid; }
+    .callout.note { background: rgba(88,166,255,.07); border-color: var(--accent); }
+    .callout.tip  { background: rgba(63,185,80,.07);  border-color: var(--green); }
+    .callout.warn { background: rgba(210,153,34,.07); border-color: var(--yellow); }
+    .callout.key  { background: rgba(248,81,73,.07);  border-color: var(--red); }
+    .callout strong { display: block; margin-bottom: .3rem; font-size: .85rem;
+                      text-transform: uppercase; letter-spacing: .04em; }
+
+    /* Reference list */
+    .refs ol { padding-left: 1.5rem; }
+    .refs li { margin-bottom: .5rem; font-size: .9rem; color: var(--muted); }
+    .refs a { color: var(--accent); }
+
+    /* TOC */
+    .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+           padding: 1rem 1.2rem; margin: 0 0 2rem; font-size: .9rem; }
+    .toc h3 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+              letter-spacing: .1em; margin-bottom: .6rem; }
+    .toc ol { padding-left: 1.3rem; }
+    .toc li { margin-bottom: .25rem; }
+    .toc a { color: var(--muted); text-decoration: none; }
+    .toc a:hover { color: var(--accent); }
+
+    /* Footer */
+    .report-footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border);
+                     color: var(--muted); font-size: .8rem; display: flex; justify-content: space-between; }
+
+    ul { padding-left: 1.4rem; margin-bottom: 1rem; }
+    li { margin-bottom: .3rem; }
+  </style>
+</head>
+<body>
+<div class="page-wrap">
+
+  <a href="../index.html" class="back-link">← Back to CJ-Note</a>
+
+  <header class="report-header">
+    <h1>vLLM 量化支持深度解析</h1>
+    <div class="meta">
+      <span>TYPE: REPO ANALYSIS</span>
+      <span>DATE: 2026-04-10</span>
+      <span>TOPIC: Quantization / CUDA Kernels / KV Cache</span>
+      <span>BASE: vLLM v1</span>
+    </div>
+  </header>
+
+  <!-- TL;DR -->
+  <div class="tldr">
+    <h3>TL;DR</h3>
+    <ul>
+      <li>vLLM 通过统一的 <code>LinearMethodBase</code> 接口支持 FP8、AWQ、GPTQ/Marlin、BitsAndBytes、GGUF 多种量化方案，模型层无感知切换。</li>
+      <li>FP8 W8A8 是 H100/H200 Hopper GPU 的首选量化策略，权重 2× 压缩，算力提升 2×，精度损失极小。</li>
+      <li>Marlin GEMM 内核针对 Ampere+ GPU 将 GPTQ/AWQ INT4 推理提速 4× 以上，利用 INT4 TensorCore 指令与 Persistent Kernel 技术。</li>
+      <li>KV Cache FP8 量化（<code>reshape_and_cache</code> 内核）可将 KV Cache 显存压缩 2×，对长序列大 batch 场景效果显著。</li>
+      <li>量化方案选择取决于 GPU 代际：Hopper 优选 FP8、Ampere 优选 AWQ/GPTQ+Marlin、边缘设备可选 BitsAndBytes NF4 或 GGUF。</li>
+    </ul>
+  </div>
+
+  <!-- Table of Contents -->
+  <nav class="toc">
+    <h3>Contents</h3>
+    <ol>
+      <li><a href="#overview">1. 量化概述</a></li>
+      <li><a href="#framework">2. 量化框架架构</a></li>
+      <li><a href="#fp8">3. FP8 量化</a></li>
+      <li><a href="#awq">4. AWQ 量化</a></li>
+      <li><a href="#gptq-marlin">5. GPTQ / Marlin 量化</a></li>
+      <li><a href="#bnb">6. BitsAndBytes（NF4/INT8）</a></li>
+      <li><a href="#gguf">7. GGUF 量化</a></li>
+      <li><a href="#kvcache">8. KV Cache 量化</a></li>
+      <li><a href="#kernels">9. 量化内核实现</a></li>
+      <li><a href="#comparison">10. 量化方法对比</a></li>
+    </ol>
+  </nav>
+
+  <!-- ── 1. 量化概述 ──────────────────────────── -->
+  <section id="overview">
+    <h2>1. 量化概述</h2>
+    <p>量化通过降低模型权重/激活值的数据精度来减少显存占用和加速推理。以 7B 参数模型为例，下面展示了三种典型配置下的显存需求：</p>
+
+    <div class="info-grid">
+      <div class="info-card">
+        <div class="label">BF16 基准（7B）</div>
+        <div class="value">~30 GB</div>
+      </div>
+      <div class="info-card">
+        <div class="label">W4A16 AWQ/GPTQ（7B）</div>
+        <div class="value">~20 GB</div>
+      </div>
+      <div class="info-card">
+        <div class="label">W8A8 FP8（7B）</div>
+        <div class="value">~15 GB</div>
+      </div>
+    </div>
+
+    <pre><code>BF16 基准（7B模型）:
+  权重显存: 7B × 2 bytes = 14 GB
+  KV Cache: ~16 GB（batch=32, seq=2048）
+  总计: ~30 GB（需要 A100 40GB）
+
+W4A16 量化（AWQ/GPTQ）:
+  权重显存: 7B × 0.5 bytes = 3.5 GB（4× 压缩）
+  KV Cache: ~16 GB（不变）
+  总计: ~20 GB（可用 RTX 3090 24GB）
+
+W8A8 FP8 量化:
+  权重显存: 7B × 1 byte = 7 GB（2× 压缩）
+  KV FP8: ~8 GB（2× 压缩）
+  总计: ~15 GB（可用 RTX 4090 24GB）</code></pre>
+  </section>
+
+  <!-- ── 2. 量化框架架构 ──────────────────────── -->
+  <section id="framework">
+    <h2>2. 量化框架架构</h2>
+    <p>文件路径：<code>vllm/model_executor/layers/quantization/</code></p>
+    <p>vLLM 使用注册表模式管理量化方案，每种量化类型对应一个 <code>QuantizationConfig</code> 子类，在模型构建时将标准 Linear 层替换为量化版本。</p>
+
+    <div class="diagram-wrap">
+      <h4>量化注册表与模型构建流程</h4>
+      <div class="mermaid">
+graph TD
+    A[model_config.quantization = &quot;fp8&quot;] --> B[QuantizationConfig.get_quant_cls]
+    B --> C{量化注册表}
+    C -->|fp8| D[Fp8Config]
+    C -->|awq| E[AWQConfig]
+    C -->|gptq| F[GPTQConfig]
+    C -->|marlin| G[MarlinConfig]
+    C -->|bitsandbytes| H[BitsAndBytesConfig]
+    C -->|gguf| I[GGUFConfig]
+    D --> J[build_model]
+    E --> J
+    F --> J
+    G --> J
+    H --> J
+    I --> J
+    J --> K[ColumnParallelLinear → Fp8LinearMethod]
+    J --> L[RowParallelLinear → Fp8LinearMethod]
+      </div>
+    </div>
+
+    <h3>2.1 量化 Linear 层的接口</h3>
+    <p>所有量化方法实现同一个抽象基类，确保模型层代码无需感知底层量化细节：</p>
+    <pre><code class="language-python">class LinearMethodBase(ABC):
+    """量化 Linear 的基类"""
+
+    @abstractmethod
+    def create_weights(
+        self, input_size, output_size, ...
+    ) -> dict[str, torch.Tensor]:
+        """创建量化权重张量（INT4/INT8/FP8 等格式）"""
+
+    @abstractmethod
+    def apply(
+        self, layer: torch.nn.Module, x: torch.Tensor, ...
+    ) -> torch.Tensor:
+        """执行量化矩阵乘法"""</code></pre>
+  </section>
+
+  <!-- ── 3. FP8 量化 ──────────────────────────── -->
+  <section id="fp8">
+    <h2>3. FP8 量化</h2>
+    <p>文件路径：<code>vllm/model_executor/layers/quantization/fp8.py</code></p>
+
+    <h3>3.1 W8A8 FP8（推荐方案）</h3>
+
+    <div class="callout tip">
+      <strong>推荐场景</strong>
+      FP8 W8A8 是 H100/H200 Hopper GPU 的生产首选。原生 FP8 TensorCore 使算力达到 BF16 的 2×，同时 E4M3 格式动态范围足够保持精度。
+    </div>
+
+    <pre><code>FP8 格式: E4M3（范围更大，适合激活值）/ E5M2（范围更大）
+
+W8A8:
+  权重: FP8 存储（~1 byte/param）
+  激活: FP8 量化（动态量化，每次前向计算时缩放）
+
+支持硬件: NVIDIA H100/H200/Blackwell（原生 FP8 TensorCore）
+          NVIDIA A100（模拟 FP8，略慢）
+
+优势:
+  - 权重 2× 压缩
+  - H100 FP8 TensorCore 是 BF16 的 2× 算力
+  - 精度损失极小（E4M3 动态范围足够）</code></pre>
+
+    <h3>3.2 FP8 量化内核</h3>
+
+    <div class="diagram-wrap">
+      <h4>FP8 GEMM 执行流程（csrc/quantization/fp8.cu）</h4>
+      <div class="mermaid">
+graph LR
+    A["input_bf16 [M,K]"] --> B["动态量化\nscale_x = max(abs(x)) / FP8_MAX"]
+    B --> C["input_fp8 [M,K]"]
+    D["weight_fp8 [K,N]"] --> E["CUTLASS FP8 GEMM"]
+    C --> E
+    E --> F["output_fp32 [M,N]"]
+    F --> G["× scale_w × scale_x"]
+    G --> H["output_bf16 [M,N]"]
+      </div>
+    </div>
+
+    <h3>3.3 Per-tensor vs Per-channel 量化</h3>
+    <pre><code>Per-tensor 量化:
+  整个 weight 矩阵用一个 scale 值
+  简单，但对权重分布不均匀时精度差
+
+Per-channel 量化（FP8 recommended）:
+  weight.shape = [out_features, in_features]
+  scale.shape = [out_features, 1]  ← 每个输出通道一个 scale
+  精度更好，内核稍复杂
+
+Channelwise activation scaling:
+  动态计算每个 token 的激活 scale
+  scale_x = max(abs(x)) per token</code></pre>
+  </section>
+
+  <!-- ── 4. AWQ 量化 ──────────────────────────── -->
+  <section id="awq">
+    <h2>4. AWQ 量化</h2>
+    <p>文件路径：<code>vllm/model_executor/layers/quantization/awq.py</code></p>
+
+    <h3>4.1 原理</h3>
+    <p>AWQ（Activation-aware Weight Quantization）是激活感知的 W4A16 量化。其核心洞察是：约 1% 的权重通道对激活值中"显著"通道具有支配性影响，直接量化这些通道会造成较大误差。</p>
+
+    <div class="diagram-wrap">
+      <h4>AWQ 量化校准与推理流程</h4>
+      <div class="mermaid">
+graph TD
+    A["分析激活值分布"] --> B["识别重要通道\n（激活幅度大的 ~1%）"]
+    B --> C["对重要通道权重做缩放\nscale = activation_scale"]
+    C --> D["对缩放后权重做 INT4 量化\n误差更均匀"]
+    D --> E["存储 weight_int4 + scale + zero"]
+    E --> F{"推理时"}
+    F --> G["weight_dequant = weight_int4 × scale\n反量化到 FP16"]
+    G --> H["GEMM: output = input_fp16 @ weight_fp16"]
+      </div>
+    </div>
+
+    <h3>4.2 AWQ 推理内核</h3>
+    <pre><code>AWQ 量化 Linear 执行:
+  weight_int4 [out, in/8]  ← 每个 uint8 存 2 个 INT4
+  weight_scale [out, in/group_size]  ← 每组（默认128）一个缩放因子
+  weight_zero [out, in/group_size]   ← 零点
+
+  CUTLASS AWQ GEMM (csrc/quantization/awq/):
+    1. 反量化: w_fp16 = (weight_int4 - zero) × scale
+    2. GEMM: output = input_fp16 @ w_fp16
+
+    注意: Marlin GEMM 是 AWQ 在 Ampere+ GPU 上的高性能实现</code></pre>
+  </section>
+
+  <!-- ── 5. GPTQ / Marlin 量化 ──────────────── -->
+  <section id="gptq-marlin">
+    <h2>5. GPTQ / Marlin 量化</h2>
+
+    <h3>5.1 GPTQ 原理</h3>
+    <pre><code>GPTQ（Generative Pre-Trained Transformers Quantization）:
+  - 逐层量化，每层独立校准
+  - 使用 Hessian 矩阵指导量化顺序（误差最小化）
+  - 支持 INT4/INT8
+
+Marlin（GPTQ 的高性能 CUDA 内核）:
+  - 针对 Ampere/Hopper GPU 优化的量化 GEMM
+  - 比原始 GPTQ 内核快 4× 以上
+  - 支持: W4A16, W4A8, W8A16</code></pre>
+
+    <h3>5.2 Marlin 执行流程</h3>
+
+    <div class="diagram-wrap">
+      <h4>Marlin GEMM 内核执行流程（csrc/quantization/marlin/）</h4>
+      <div class="mermaid">
+graph TD
+    subgraph offline["离线预处理（一次性）"]
+        A["weight_int4（原始 GPTQ 格式）"] --> B["重新排列为 Marlin 内存布局\n优化 GPU L2 Cache 命中率"]
+    end
+    subgraph online["推理（每次前向）"]
+        C["读取 Marlin 格式 weight_int4"] --> D["反量化\nweight_fp16 = dequant(weight_int4, scale, zero)"]
+        D --> E["超高速 GEMM\noutput = input @ weight_fp16"]
+    end
+    B --> C
+    subgraph opts["关键优化"]
+        F["INT4 TensorCore 指令\n(NVIDIA Ampere)"]
+        G["Persistent Kernel\n长驻 SM，减少 launch 开销"]
+        H["复用输入 TensorCore 矩阵\n减少 DRAM 带宽"]
+    end
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 6. BitsAndBytes ────────────────────── -->
+  <section id="bnb">
+    <h2>6. BitsAndBytes（NF4/INT8）</h2>
+
+    <pre><code>BitsAndBytes 支持:
+  INT8: W8A8，简单量化，适合边缘场景
+  NF4: 4-bit NormalFloat，QLoRA 使用的格式
+
+特点:
+  - 不需要量化校准数据
+  - 支持动态量化（推理时逐层量化）
+  - 精度低于 AWQ/GPTQ（无校准优化）
+
+使用方式:
+  LLM(model="...", quantization="bitsandbytes", load_in_4bit=True)</code></pre>
+
+    <div class="callout warn">
+      <strong>注意</strong>
+      BitsAndBytes 无需校准数据，使用门槛低，但由于缺乏激活感知优化，推理精度通常低于 AWQ/GPTQ。适合资源受限的边缘场景或快速实验，不建议用于生产高精度服务。
+    </div>
+  </section>
+
+  <!-- ── 7. GGUF 量化 ──────────────────────── -->
+  <section id="gguf">
+    <h2>7. GGUF 量化</h2>
+
+    <pre><code>GGUF（llama.cpp 格式）:
+  支持 Q4_0, Q4_K_M, Q5_K_M, Q6_K, Q8_0 等格式
+
+  Q4_K_M（流行格式）:
+    大部分权重: 4-bit + 独立量化缩放因子
+    关键层（attention、embedding）: 6-bit
+
+vLLM GGUF 支持 (csrc/quantization/gguf/):
+  直接加载 .gguf 文件
+  使用专用 GGUF dequant 内核
+
+  限制:
+    不支持 LoRA
+    推理速度略低于 CUTLASS 量化方案</code></pre>
+
+    <div class="callout note">
+      <strong>使用场景</strong>
+      GGUF 主要用于兼容 llama.cpp 生态。如果模型已以 GGUF 格式发布，vLLM 可直接加载，无需转换。但若追求最高推理吞吐，建议转换为 AWQ/GPTQ 格式使用 CUTLASS/Marlin 内核。
+    </div>
+  </section>
+
+  <!-- ── 8. KV Cache 量化 ───────────────────── -->
+  <section id="kvcache">
+    <h2>8. KV Cache 量化</h2>
+    <p>文件路径：<code>vllm/model_executor/layers/quantization/kv_cache.py</code></p>
+
+    <div class="diagram-wrap">
+      <h4>KV Cache FP8 量化写入/读取流程</h4>
+      <div class="mermaid">
+sequenceDiagram
+    participant A as Attention 计算层
+    participant B as reshape_and_cache 内核
+    participant C as KV Cache (FP8 存储)
+    participant D as FlashAttention/FlashInfer
+
+    A->>B: key_fp16, val_fp16
+    Note over B: k_scale = max(abs(key)) / FP8_MAX<br/>v_scale = max(abs(val)) / FP8_MAX
+    B->>C: key_fp8, val_fp8, k_scale, v_scale
+    C->>D: key_fp8 + k_scale
+    Note over D: 内核内部反量化<br/>key_fp8 → BF16/FP16
+    D->>A: 注意力输出
+      </div>
+    </div>
+
+    <pre><code>KV Cache FP8 量化流程:
+
+写入时（reshape_and_cache 内核）:
+  key_fp16 → key_fp8（使用动态 scale）
+  val_fp16 → val_fp8
+
+  k_scale = max(abs(key)) / FP8_MAX  ← 全局 scale（运行时统计）
+  v_scale = max(abs(val)) / FP8_MAX
+
+读取时（FlashAttention/FlashInfer 内核内部）:
+  key_fp8, k_scale → 反量化到 FP16/BF16
+  然后正常计算注意力
+
+显存节省:
+  BF16 → FP8: 2× 压缩
+  对于长序列/大 batch，KV Cache 可能占总显存的 50%+
+  FP8 KV Cache 可显著提升系统容量</code></pre>
+  </section>
+
+  <!-- ── 9. 量化内核实现 ────────────────────── -->
+  <section id="kernels">
+    <h2>9. 量化内核实现</h2>
+
+    <h3>9.1 csrc/quantization 目录</h3>
+    <pre><code>csrc/quantization/
+├── awq/
+│   ├── gemm_kernels.cu         ← AWQ W4A16 GEMM
+│   └── dequantize_kernels.cu
+├── gptq/
+│   ├── q_gemm.cu               ← GPTQ INT4 GEMM
+│   └── qdq_kernel.cu
+├── gptq_allspark/              ← AllSpark GPTQ 优化
+├── marlin/
+│   ├── dense_kernel.cu         ← Marlin W4A16 dense GEMM
+│   └── sparse_kernel.cu        ← Marlin sparse（2:4 sparsity）
+├── machete/
+│   └── *.cu                    ← Machete GEMM（Hopper 优化）
+├── fp8/                        ← FP8 动态量化
+│   ├── fp8_marlin.cu
+│   └── common.cuh
+├── gguf/
+│   └── gguf_kernel.cu          ← GGUF dequant 内核
+├── w8a8/
+│   └── scaled_mm.cu            ← W8A8 缩放矩阵乘
+└── hadamard/
+    └── hadamard.cu             ← Hadamard 变换（用于量化预处理）</code></pre>
+
+    <h3>9.2 内核选择逻辑</h3>
+    <p>vLLM 在运行时根据 GPU 架构自动选择最优内核，以 FP8 为例：</p>
+
+    <pre><code class="language-python"># 根据 GPU 架构选择最优内核
+
+class Fp8LinearMethod(LinearMethodBase):
+    def apply(self, layer, x):
+        if current_platform.is_hopper():
+            # H100/H200: 使用原生 FP8 TensorCore
+            return cutlass_fp8_gemm(x, weight, scale_x, scale_w)
+        elif current_platform.is_ampere():
+            # A100: 模拟 FP8（先转 FP16 再 GEMM）
+            w_fp16 = dequant_fp8_to_fp16(weight, scale_w)
+            return torch.mm(x, w_fp16)
+        else:
+            # 回退到 FP16
+            return torch.mm(x, dequant(weight))</code></pre>
+
+    <div class="callout note">
+      <strong>设计亮点</strong>
+      这种基于 <code>current_platform</code> 的运行时分发，使同一量化配置可在不同 GPU 世代上取得最佳性能，用户无需手动调整。Hopper 原生 FP8 算力是 Ampere 模拟路径的约 2×。
+    </div>
+  </section>
+
+  <!-- ── 10. 量化方法对比 ───────────────────── -->
+  <section id="comparison">
+    <h2>10. 量化方法对比</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>方法</th>
+          <th>精度格式</th>
+          <th>推理精度</th>
+          <th>压缩比</th>
+          <th>适用 GPU</th>
+          <th>推荐场景</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>FP8 W8A8</strong></td>
+          <td>W8A8</td>
+          <td>★★★★☆</td>
+          <td>2×</td>
+          <td>H100+</td>
+          <td>生产首选（Hopper）</td>
+        </tr>
+        <tr>
+          <td><strong>AWQ W4A16</strong></td>
+          <td>W4A16</td>
+          <td>★★★★☆</td>
+          <td>4×</td>
+          <td>Ampere+</td>
+          <td>高压缩率</td>
+        </tr>
+        <tr>
+          <td><strong>GPTQ/Marlin W4A16</strong></td>
+          <td>W4A16</td>
+          <td>★★★★☆</td>
+          <td>4×</td>
+          <td>Ampere+</td>
+          <td>高压缩率</td>
+        </tr>
+        <tr>
+          <td><strong>BF16（无量化）</strong></td>
+          <td>BF16</td>
+          <td>★★★★★</td>
+          <td>1×</td>
+          <td>全部</td>
+          <td>精度优先</td>
+        </tr>
+        <tr>
+          <td><strong>INT8 W8A8</strong></td>
+          <td>W8A8</td>
+          <td>★★★☆☆</td>
+          <td>2×</td>
+          <td>全部</td>
+          <td>通用，精度较低</td>
+        </tr>
+        <tr>
+          <td><strong>GGUF Q4_K</strong></td>
+          <td>~4bit</td>
+          <td>★★★☆☆</td>
+          <td>4×</td>
+          <td>全部</td>
+          <td>兼容 llama.cpp</td>
+        </tr>
+        <tr>
+          <td><strong>NF4 BnB</strong></td>
+          <td>4bit</td>
+          <td>★★★☆☆</td>
+          <td>4×</td>
+          <td>全部</td>
+          <td>边缘/低资源</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- Chart.js: 压缩比对比 -->
+    <div class="chart-wrap">
+      <h4>各量化方案权重压缩比对比（7B 模型，BF16 基准 = 14 GB）</h4>
+      <canvas id="compressionChart"></canvas>
+    </div>
+
+    <!-- Chart.js: 显存占用对比 -->
+    <div class="chart-wrap">
+      <h4>各量化方案总显存占用估算（7B 模型，batch=32, seq=2048）</h4>
+      <canvas id="memoryChart"></canvas>
+    </div>
+  </section>
+
+  <!-- ── References ─────────────────────────── -->
+  <section id="refs" class="refs">
+    <h2>References</h2>
+    <ol>
+      <li><a href="https://github.com/vllm-project/vllm/tree/main/vllm/model_executor/layers/quantization">vLLM 量化层源码 — vllm/model_executor/layers/quantization/</a></li>
+      <li><a href="https://github.com/vllm-project/vllm/tree/main/csrc/quantization">vLLM 量化 CUDA 内核 — csrc/quantization/</a></li>
+      <li><a href="https://arxiv.org/abs/2306.00978">AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration (Lin et al., 2023)</a></li>
+      <li><a href="https://arxiv.org/abs/2210.17323">GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers (Frantar et al., 2022)</a></li>
+      <li><a href="https://github.com/IST-DASLab/marlin">Marlin: Fast Mixed-Precision Matrix Multiplication (IST-DASLab)</a></li>
+      <li><a href="https://docs.vllm.ai/en/latest/quantization/fp8.html">vLLM 官方文档 — FP8 量化</a></li>
+      <li><a href="https://huggingface.co/docs/bitsandbytes/main/en/index">BitsAndBytes 官方文档</a></li>
+      <li><a href="https://github.com/ggerganov/llama.cpp/blob/master/docs/gguf.md">GGUF 格式规范 (llama.cpp)</a></li>
+    </ol>
+  </section>
+
+  <footer class="report-footer">
+    <span>CJ-Note · LLM Inference Research</span>
+    <span>Generated 2026-04-10</span>
+  </footer>
+</div>
+
+<script>
+  // Initialize Mermaid with dark theme
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      background: '#161b22',
+      primaryColor: '#1f6feb',
+      primaryTextColor: '#e6edf3',
+      lineColor: '#8b949e'
+    }
+  });
+
+  // Chart 1: 压缩比对比（基于 markdown 数据）
+  const ctxCompression = document.getElementById('compressionChart');
+  if (ctxCompression) {
+    new Chart(ctxCompression, {
+      type: 'bar',
+      data: {
+        labels: ['BF16（基准）', 'FP8 W8A8', 'INT8 W8A8', 'AWQ W4A16', 'GPTQ/Marlin', 'GGUF Q4_K', 'NF4 BnB'],
+        datasets: [{
+          label: '权重显存 (GB)',
+          data: [14, 7, 7, 3.5, 3.5, 3.5, 3.5],
+          backgroundColor: ['#30363d', '#58a6ff', '#3fb950', '#d29922', '#f0883e', '#bc8cff', '#ff7b72'],
+          borderColor: ['#58a6ff', '#58a6ff', '#3fb950', '#d29922', '#f0883e', '#bc8cff', '#ff7b72'],
+          borderWidth: 1,
+          borderRadius: 4
+        }]
+      },
+      options: {
+        plugins: {
+          legend: { labels: { color: '#8b949e' } }
+        },
+        scales: {
+          x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+          y: {
+            ticks: { color: '#8b949e' },
+            grid: { color: '#21262d' },
+            title: { display: true, text: '显存 (GB)', color: '#8b949e' }
+          }
+        }
+      }
+    });
+  }
+
+  // Chart 2: 总显存占用（基于 markdown 数据）
+  const ctxMemory = document.getElementById('memoryChart');
+  if (ctxMemory) {
+    new Chart(ctxMemory, {
+      type: 'bar',
+      data: {
+        labels: ['BF16（基准）', 'W4A16（AWQ/GPTQ）', 'W8A8 FP8'],
+        datasets: [
+          {
+            label: '权重显存 (GB)',
+            data: [14, 3.5, 7],
+            backgroundColor: '#1f6feb',
+            borderColor: '#58a6ff',
+            borderWidth: 1,
+            borderRadius: 4
+          },
+          {
+            label: 'KV Cache (GB)',
+            data: [16, 16, 8],
+            backgroundColor: '#3fb950',
+            borderColor: '#3fb950',
+            borderWidth: 1,
+            borderRadius: 4
+          }
+        ]
+      },
+      options: {
+        plugins: {
+          legend: { labels: { color: '#8b949e' } }
+        },
+        scales: {
+          x: {
+            stacked: true,
+            ticks: { color: '#8b949e' },
+            grid: { color: '#21262d' }
+          },
+          y: {
+            stacked: true,
+            ticks: { color: '#8b949e' },
+            grid: { color: '#21262d' },
+            title: { display: true, text: '显存 (GB)', color: '#8b949e' }
+          }
+        }
+      }
+    });
+  }
+</script>
+</body>
+</html>

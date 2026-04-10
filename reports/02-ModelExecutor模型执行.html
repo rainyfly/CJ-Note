@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang ModelExecutor 模型执行深度解析">
+  <meta name="report-type"  content="repo">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang ModelExecutor 模型执行深度解析">
+  <meta name="report-type"  content="sglang">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+<title>SGLang ModelExecutor 模型执行深度解析</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}:root{--bg:#0d1117;--bg2:#161b22;--bg3:#1c2128;--border:#30363d;--text:#e6edf3;--text2:#8b949e;--text3:#656d76;--cyan:#39d0d8;--blue:#58a6ff;--green:#3fb950;--yellow:#e3b341;--orange:#f78166;--purple:#bc8cff;--red:#f85149;--font-mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace}html{scroll-behavior:smooth}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif;background:var(--bg);color:var(--text);line-height:1.75;font-size:16px}.page-wrap{display:grid;grid-template-columns:260px 1fr;min-height:100vh}@media(max-width:900px){.page-wrap{grid-template-columns:1fr}.sidebar{display:none}}.sidebar{position:sticky;top:0;height:100vh;overflow-y:auto;background:var(--bg2);border-right:1px solid var(--border);padding:24px 16px}.sidebar-brand{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:16px}.toc a{display:block;padding:6px 8px;font-size:13px;color:var(--text2);text-decoration:none;border-radius:6px;margin-bottom:2px}.toc a:hover{background:var(--bg3);color:var(--cyan)}main{max-width:960px;margin:0 auto;padding:48px 32px}h1{font-size:2.2rem;margin-bottom:8px;background:linear-gradient(135deg,var(--cyan),var(--blue));-webkit-background-clip:text;-webkit-text-fill-color:transparent}.subtitle{color:var(--text2);font-size:1rem;margin-bottom:40px}h2{font-size:1.5rem;color:var(--cyan);margin:48px 0 16px;padding-bottom:8px;border-bottom:1px solid var(--border)}h3{font-size:1.15rem;color:var(--blue);margin:32px 0 12px}h4{font-size:1rem;color:var(--purple);margin:24px 0 8px}p,li{margin-bottom:12px}ul,ol{padding-left:24px}a{color:var(--blue);text-decoration:none}.card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px;margin:16px 0}table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px}th,td{padding:10px 14px;text-align:left;border:1px solid var(--border)}th{background:var(--bg3);color:var(--cyan)}td{background:var(--bg2)}code{font-family:var(--font-mono);background:var(--bg3);padding:2px 6px;border-radius:4px;font-size:0.9em;color:var(--orange)}pre{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:16px;overflow-x:auto;margin:16px 0;font-size:13px}pre code{background:none;padding:0;color:var(--text)}.mermaid{background:var(--bg2);border-radius:12px;padding:20px;margin:16px 0;display:flex;justify-content:center}.highlight{background:rgba(57,208,216,0.08);border-left:3px solid var(--cyan);padding:16px 20px;border-radius:0 8px 8px 0;margin:16px 0}
+</style>
+</head>
+<body>
+<div class="page-wrap">
+<nav class="sidebar">
+<div class="sidebar-brand">SGLang Research</div>
+<div class="toc">
+<a href="#overview">1. 系统总览</a>
+<a href="#model-runner">2. ModelRunner 初始化</a>
+<a href="#model-loading">3. 模型加载</a>
+<a href="#memory-init">4. 内存池初始化</a>
+<a href="#forward-pass">5. 前向推理</a>
+<a href="#forward-batch">6. ForwardBatch</a>
+<a href="#cuda-graph">7. CUDA Graph</a>
+<a href="#capture">8. 图捕获流程</a>
+<a href="#replay">9. 图回放机制</a>
+<a href="#torch-compile">10. torch.compile</a>
+<a href="#spec-decode">11. 投机解码集成</a>
+<a href="#summary">12. 总结</a>
+</div>
+</nav>
+<main>
+
+<h1>SGLang ModelExecutor 模型执行</h1>
+<p class="subtitle">深入分析 ModelRunner 初始化、模型加载、前向推理、CUDA Graph 捕获/回放及 ForwardBatch 设计</p>
+
+<h2 id="overview">1. 系统总览</h2>
+<p>ModelExecutor 是 SGLang 中负责实际 GPU 计算的模块，核心组件包括：</p>
+<div class="card">
+<table>
+<tr><th>组件</th><th>文件</th><th>职责</th></tr>
+<tr><td><code>ModelRunner</code></td><td>model_runner.py</td><td>模型生命周期管理：加载、内存池、前向推理</td></tr>
+<tr><td><code>CudaGraphRunner</code></td><td>cuda_graph_runner.py</td><td>CUDA Graph 捕获与回放，torch.compile 集成</td></tr>
+<tr><td><code>ForwardBatch</code></td><td>forward_batch_info.py</td><td>GPU 侧批次数据结构</td></tr>
+<tr><td><code>ForwardMode</code></td><td>forward_batch_info.py</td><td>前向模式枚举(EXTEND/DECODE/MIXED等)</td></tr>
+<tr><td><code>GraphInputBuffers</code></td><td>input_buffers.py</td><td>CUDA Graph 复用的输入缓冲区</td></tr>
+</table>
+</div>
+<div class="mermaid">
+graph TB
+    subgraph "ModelExecutor 层次架构"
+        TW["TpModelWorker"] --> MR["ModelRunner"]
+        MR --> ML["ModelLoader<br/>(加载权重)"]
+        MR --> MP["MemoryPool<br/>(KV缓存)"]
+        MR --> AB["AttentionBackend<br/>(注意力后端)"]
+        MR --> CG["CudaGraphRunner<br/>(CUDA Graph)"]
+        MR --> SM["Sampler<br/>(采样器)"]
+        MR --> LR["LoRAManager<br/>(LoRA管理)"]
+    end
+    style TW fill:#39d0d8,color:#0d1117
+    style MR fill:#58a6ff,color:#0d1117
+    style CG fill:#f78166,color:#0d1117
+</div>
+
+<h2 id="model-runner">2. ModelRunner 初始化</h2>
+<p><code>ModelRunner</code> 是模型执行的核心类，初始化过程涵盖分布式环境、模型加载和内存管理。</p>
+<h3>2.1 初始化流程</h3>
+<div class="mermaid">
+flowchart TD
+    A["ModelRunner.__init__()"] --> B["解析 server_args"]
+    B --> C["model_specific_adjustment()<br/>模型特化配置"]
+    C --> D["init_torch_distributed()<br/>初始化分布式环境"]
+    D --> E["set_offloader()<br/>CPU offload 设置"]
+    E --> F["initialize(min_per_gpu_memory)"]
+    F --> G["load_model()<br/>加载模型权重"]
+    G --> H["init_memory_pool()<br/>初始化 KV 缓存池"]
+    H --> I["init_attention_backend()<br/>初始化注意力后端"]
+    I --> J["init_cuda_graphs()<br/>CUDA Graph 捕获"]
+    style A fill:#39d0d8,color:#0d1117
+    style G fill:#f78166,color:#0d1117
+    style J fill:#bc8cff,color:#0d1117
+</div>
+<h3>2.2 关键构造参数</h3>
+<table>
+<tr><th>参数</th><th>类型</th><th>描述</th></tr>
+<tr><td><code>model_config</code></td><td>ModelConfig</td><td>HF 配置封装(层数/头数/维度等)</td></tr>
+<tr><td><code>mem_fraction_static</code></td><td>float</td><td>GPU 内存中用于 KV 缓存的比例</td></tr>
+<tr><td><code>gpu_id</code></td><td>int</td><td>GPU 设备 ID</td></tr>
+<tr><td><code>tp_rank / tp_size</code></td><td>int</td><td>张量并行的 rank 和大小</td></tr>
+<tr><td><code>pp_rank / pp_size</code></td><td>int</td><td>流水线并行的 rank 和大小</td></tr>
+<tr><td><code>moe_ep_rank / moe_ep_size</code></td><td>int</td><td>专家并行的 rank 和大小</td></tr>
+<tr><td><code>is_draft_worker</code></td><td>bool</td><td>是否为投机解码的 draft worker</td></tr>
+</table>
+<h3>2.3 MLA 后端检测</h3>
+<div class="highlight">
+<strong>MLA(Multi-head Latent Attention)后端：</strong>当模型使用 MLA 架构时（如 DeepSeek-V2/V3），<code>use_mla_backend</code> 被设置为 True。支持的 MLA 注意力后端包括：<code>aiter</code>、<code>flashinfer</code>、<code>fa3</code>、<code>fa4</code>、<code>triton</code>、<code>flashmla</code>、<code>cutlass_mla</code>、<code>trtllm_mla</code>、<code>ascend</code>、<code>nsa</code>。
+</div>
+
+<h2 id="model-loading">3. 模型加载</h2>
+<p>模型加载通过 <code>ModelLoader</code> 体系实现，支持多种加载格式。</p>
+<div class="mermaid">
+flowchart TD
+    A["load_model()"] --> B["get_model_loader(load_config)<br/>选择加载器"]
+    B --> C{"LoadFormat"}
+    C -->|"auto/safetensors"| D["DefaultModelLoader"]
+    C -->|"dummy"| E["DummyModelLoader"]
+    C -->|"gguf"| F["GGUFModelLoader"]
+    C -->|"bitsandbytes"| G["BitsAndBytesModelLoader"]
+    D --> H["load_model_weights()<br/>加载分片权重"]
+    H --> I["process_weight_after_load()<br/>后处理(量化等)"]
+    I --> J["模型就绪"]
+    style A fill:#39d0d8,color:#0d1117
+    style J fill:#3fb950,color:#0d1117
+</div>
+<h3>3.1 分布式模型加载</h3>
+<ul>
+<li><strong>权重分片：</strong>权重按 TP 维度切分，每个 rank 仅加载对应分片</li>
+<li><strong>不均匀 CPU TP：</strong>支持在 CPU 上用不同数量的 TP 加载然后调整到目标 TP</li>
+<li><strong>慢 rank 检测：</strong>通过 <code>slow_rank_detector</code> 监测加载不均衡</li>
+<li><strong>远程权重加载：</strong>支持通过 transfer engine 从远程实例加载权重</li>
+</ul>
+<h3>3.2 量化支持</h3>
+<table>
+<tr><th>量化方法</th><th>说明</th></tr>
+<tr><td>FP8 (E4M3/E5M2)</td><td>FlashInfer/Triton 原生支持的 FP8 KV 缓存</td></tr>
+<tr><td>FP4</td><td>4-bit 浮点量化</td></tr>
+<tr><td>GPTQ / AWQ</td><td>经典权重量化方案</td></tr>
+<tr><td>BitsAndBytes</td><td>4-bit / 8-bit 量化加载</td></tr>
+<tr><td>GGUF</td><td>llama.cpp 格式直接加载</td></tr>
+</table>
+
+<h2 id="memory-init">4. 内存池初始化</h2>
+<p>ModelRunner 负责计算可用 GPU 内存并创建 KV 缓存池。</p>
+<div class="mermaid">
+flowchart TD
+    A["init_memory_pool()"] --> B["计算 available_gpu_memory"]
+    B --> C["减去模型权重内存"]
+    C --> D["乘以 mem_fraction_static"]
+    D --> E["计算 max_total_num_tokens"]
+    E --> F["创建 ReqToTokenPool<br/>(请求到token映射)"]
+    F --> G["创建 KVCache<br/>(实际 KV 存储)"]
+    G --> H["创建 TokenToKVPoolAllocator<br/>(KV索引分配器)"]
+    style A fill:#39d0d8,color:#0d1117
+    style G fill:#f78166,color:#0d1117
+</div>
+<h3>4.1 KVCache 类型</h3>
+<table>
+<tr><th>类型</th><th>适用架构</th><th>存储特点</th></tr>
+<tr><td><code>MHATokenToKVPool</code></td><td>标准 MHA</td><td>分层 K/V 张量 [max_tokens, heads, dim]</td></tr>
+<tr><td><code>MLATokenToKVPool</code></td><td>MLA (DeepSeek)</td><td>压缩 KV [max_tokens, kv_lora_rank + rope_dim]</td></tr>
+<tr><td><code>SWAKVPool</code></td><td>混合滑动窗口</td><td>全局 + 滑动窗口双池</td></tr>
+<tr><td><code>MambaPool</code></td><td>Mamba/SSM</td><td>conv_state + temporal_state</td></tr>
+</table>
+
+<h2 id="forward-pass">5. 前向推理流程</h2>
+<div class="mermaid">
+sequenceDiagram
+    participant SC as Scheduler
+    participant TW as TpModelWorker
+    participant MR as ModelRunner
+    participant AB as AttentionBackend
+    participant CG as CudaGraphRunner
+    SC->>TW: forward_batch_generation(batch)
+    TW->>TW: ModelWorkerBatch.from_schedule_batch()
+    TW->>MR: forward(ForwardBatch)
+    MR->>AB: init_forward_metadata(batch)
+    alt CUDA Graph 可用
+        MR->>CG: can_run(batch)?
+        CG-->>MR: True
+        MR->>CG: replay(batch)
+        CG-->>MR: LogitsProcessorOutput
+    else 原生前向
+        MR->>MR: model.forward(input_ids, positions, ...)
+        MR-->>MR: LogitsProcessorOutput
+    end
+    MR-->>TW: ModelRunnerOutput
+    TW-->>SC: result
+</div>
+<h3>5.1 前向推理分支</h3>
+<div class="mermaid">
+flowchart TD
+    A["ModelRunner.forward()"] --> B{"forward_mode"}
+    B -->|EXTEND/MIXED| C["forward_extend()"]
+    B -->|DECODE| D{"cuda_graph 可用?"}
+    B -->|IDLE| E["返回空结果"]
+    D -->|是| F["cuda_graph_runner.replay()"]
+    D -->|否| G["forward_decode()"]
+    C --> H["model.forward(input_ids, positions, forward_batch)"]
+    F --> I["LogitsProcessorOutput"]
+    G --> H
+    H --> I
+    style A fill:#39d0d8,color:#0d1117
+    style F fill:#f78166,color:#0d1117
+    style I fill:#3fb950,color:#0d1117
+</div>
+
+<h2 id="forward-batch">6. ForwardBatch 数据结构</h2>
+<p><code>ForwardBatch</code> 是 GPU 侧的批次数据容器，所有数据以 GPU Tensor 形式存储。</p>
+<h3>6.1 核心字段</h3>
+<table>
+<tr><th>字段</th><th>类型</th><th>描述</th></tr>
+<tr><td><code>forward_mode</code></td><td>ForwardMode</td><td>前向模式(EXTEND/DECODE/MIXED/IDLE等)</td></tr>
+<tr><td><code>batch_size</code></td><td>int</td><td>批次大小</td></tr>
+<tr><td><code>input_ids</code></td><td>Tensor</td><td>输入 token IDs</td></tr>
+<tr><td><code>req_pool_indices</code></td><td>Tensor</td><td>请求在 ReqToTokenPool 中的索引</td></tr>
+<tr><td><code>seq_lens</code></td><td>Tensor</td><td>每个序列的长度</td></tr>
+<tr><td><code>out_cache_loc</code></td><td>Tensor</td><td>输出 token 在 KV 池中的位置</td></tr>
+<tr><td><code>positions</code></td><td>Tensor</td><td>位置编码信息</td></tr>
+<tr><td><code>extend_seq_lens</code></td><td>Tensor</td><td>prefill 模式下每个序列的扩展长度</td></tr>
+<tr><td><code>extend_prefix_lens</code></td><td>Tensor</td><td>prefill 模式下每个序列的前缀长度</td></tr>
+<tr><td><code>sampling_info</code></td><td>SamplingBatchInfo</td><td>采样参数(温度、top_p等)</td></tr>
+</table>
+<h3>6.2 ForwardMode 枚举</h3>
+<div class="mermaid">
+graph TB
+    FM["ForwardMode"] --> EX["EXTEND - prefill/extend"]
+    FM --> DE["DECODE - 自回归解码"]
+    FM --> MX["MIXED - 混合 extend+decode"]
+    FM --> ID["IDLE - 空闲(DP用)"]
+    FM --> TV["TARGET_VERIFY - 投机解码验证"]
+    FM --> DX["DRAFT_EXTEND - 草稿模型扩展"]
+    FM --> DX2["DRAFT_EXTEND_V2 - EAGLE v2"]
+    FM --> PB["PREBUILT - disagg decode"]
+    FM --> SP["SPLIT_PREFILL - PD mux"]
+    FM --> DL["DLLM_EXTEND - 扩散LLM"]
+    style FM fill:#39d0d8,color:#0d1117
+</div>
+
+<h2 id="cuda-graph">7. CUDA Graph 机制</h2>
+<p>CUDA Graph 通过预录制 GPU kernel 调用图来消除 CPU launch 开销，是 decode 阶段的关键优化。</p>
+<div class="highlight">
+<strong>核心思想：</strong>在初始化阶段，针对每个可能的 batch size 预先捕获一次完整的前向计算图。运行时只需更新输入缓冲区并回放图，避免逐 kernel 的 CPU dispatch 开销。
+</div>
+<h3>7.1 CudaGraphRunner 初始化</h3>
+<div class="mermaid">
+flowchart TD
+    A["CudaGraphRunner.__init__()"] --> B["解析配置"]
+    B --> C["get_batch_sizes_to_capture()<br/>确定要捕获的 BS 列表"]
+    C --> D["attn_backend.init_cuda_graph_state()<br/>初始化注意力图状态"]
+    D --> E["GraphInputBuffers.create()<br/>创建输入缓冲区"]
+    E --> F["model_capture_mode()"]
+    F --> G["capture() - 逐 BS 捕获"]
+    style A fill:#39d0d8,color:#0d1117
+    style G fill:#f78166,color:#0d1117
+</div>
+
+<h2 id="capture">8. 图捕获流程</h2>
+<div class="mermaid">
+sequenceDiagram
+    participant CGR as CudaGraphRunner
+    participant GPU as GPU
+    participant AB as AttentionBackend
+    participant Model as Model
+    CGR->>CGR: capture() 开始
+    loop 对每个 BS (从大到小)
+        CGR->>CGR: 填充输入缓冲区(dummy data)
+        CGR->>AB: init_forward_metadata_capture_cuda_graph()
+        CGR->>CGR: warmup 前向 (不录制)
+        CGR->>GPU: torch.cuda.CUDAGraph()
+        GPU->>GPU: graph.capture() 开始
+        CGR->>Model: forward(input_ids, positions, ...)
+        Model-->>CGR: output
+        GPU->>GPU: graph.capture() 结束
+        CGR->>CGR: 保存 graph 和 output_buffer
+    end
+</div>
+<div class="card">
+<h4>关键实现细节</h4>
+<ul>
+<li><strong>倒序捕获：</strong>从最大 BS 到最小 BS 捕获，利于内存在不同图之间共享</li>
+<li><strong>全局图内存池：</strong><code>global_graph_memory_pool</code> 在所有 CudaGraphRunner 间共享</li>
+<li><strong>GC 冻结：</strong>捕获期间冻结 GC 避免捕获到垃圾回收操作</li>
+<li><strong>torch.compile 集成：</strong>对小于 <code>torch_compile_max_bs</code> 的 BS 使用 compiled forward</li>
+<li><strong>PDMux 支持：</strong>PD multiplexing 模式下每个 stream 独立捕获</li>
+</ul>
+</div>
+
+<h2 id="replay">9. 图回放机制</h2>
+<h3>9.1 can_run 判断条件</h3>
+<div class="mermaid">
+flowchart TD
+    A["can_run(batch)"] --> B{"BS 在已捕获范围内?"}
+    B -->|否| Z["返回 False"]
+    B -->|是| C{"encoder_lens 全大于0?"}
+    C -->|否| Z
+    C -->|是| D{"capture_hidden_mode 匹配?"}
+    D -->|否| Z
+    D -->|是| E{"TBO 支持?"}
+    E -->|否| Z
+    E -->|是| F["返回 True"]
+    style A fill:#39d0d8,color:#0d1117
+    style F fill:#3fb950,color:#0d1117
+    style Z fill:#f85149,color:#0d1117
+</div>
+<h3>9.2 replay 执行流程</h3>
+<div class="mermaid">
+flowchart TD
+    A["replay(forward_batch)"] --> B["计算 cuda_graph_bs (可能有 padding)"]
+    B --> C["查找对应的 graph 和 output_buffer"]
+    C --> D["更新输入缓冲区(input_ids, seq_lens 等)"]
+    D --> E["attn_backend.init_forward_metadata_replay_cuda_graph()"]
+    E --> F["graph.replay()"]
+    F --> G["从 output_buffer 提取有效结果"]
+    G --> H["返回 LogitsProcessorOutput"]
+    style A fill:#39d0d8,color:#0d1117
+    style F fill:#f78166,color:#0d1117
+</div>
+
+<h2 id="torch-compile">10. torch.compile 集成</h2>
+<h3>10.1 编译配置</h3>
+<pre><code>def set_torch_compile_config():
+    torch._inductor.config.coordinate_descent_tuning = True
+    torch._inductor.config.triton.unique_kernel_names = True
+    torch._inductor.config.fx_graph_cache = True
+    torch._dynamo.config.accumulated_cache_size_limit = 1024</code></pre>
+<h3>10.2 编译与图捕获的关系</h3>
+<div class="mermaid">
+graph TB
+    subgraph "BS 小于等于 torch_compile_max_bs"
+        C1["torch.compile + CUDA Graph"]
+        C1 --> C2["编译后的 forward 被 CUDA Graph 捕获"]
+        C2 --> C3["回放 = 编译后 kernel 序列"]
+    end
+    subgraph "BS 大于 torch_compile_max_bs"
+        N1["原生 CUDA Graph"]
+        N1 --> N2["原始 forward 被 CUDA Graph 捕获"]
+    end
+    style C1 fill:#bc8cff,color:#0d1117
+    style N1 fill:#58a6ff,color:#0d1117
+</div>
+
+<h2 id="spec-decode">11. 投机解码集成</h2>
+<table>
+<tr><th>属性</th><th>标准模式</th><th>投机解码模式</th></tr>
+<tr><td>capture_forward_mode</td><td>DECODE</td><td>TARGET_VERIFY</td></tr>
+<tr><td>num_tokens_per_bs</td><td>1</td><td>speculative_num_draft_tokens</td></tr>
+<tr><td>capture_hidden_mode</td><td>NULL</td><td>依 EAGLE3 可能设为 FULL</td></tr>
+<tr><td>Graph max tokens</td><td>max_bs</td><td>max_bs * num_draft_tokens</td></tr>
+</table>
+<div class="highlight">
+<strong>EAGLE3 特殊处理：</strong>当使用 EAGLE3 + aux_hidden_state 时，目标模型需要在特定层捕获中间隐藏状态，通过 <code>model.set_eagle3_layers_to_capture()</code> 配置。
+</div>
+
+<h2 id="summary">12. 总结</h2>
+<div class="card">
+<h4>ModelExecutor 关键设计要点</h4>
+<ul>
+<li><strong>三层批次抽象：</strong>ScheduleBatch(CPU) -> ModelWorkerBatch(过渡) -> ForwardBatch(GPU)，清晰分离调度逻辑和计算逻辑</li>
+<li><strong>CUDA Graph 加速：</strong>对 decode 阶段的小批次计算，通过图捕获消除 CPU launch 开销</li>
+<li><strong>torch.compile 结合：</strong>在 CUDA Graph 中嵌入编译优化的 kernel，进一步减少计算开销</li>
+<li><strong>灵活的注意力后端：</strong>通过注册表模式支持 10+ 种注意力后端，自动选择最优实现</li>
+<li><strong>内存精细管理：</strong>多种 KV 缓存池类型适配不同模型架构(MHA/MLA/SWA/Mamba)</li>
+<li><strong>投机解码原生集成：</strong>CUDA Graph 对 verify 模式的原生支持</li>
+<li><strong>Padding 优化：</strong>当 disable_padding=False 时自动向上对齐 BS，减少图数量</li>
+<li><strong>PP 支持：</strong>通过 PPProxyTensors 在流水线阶段间传递中间张量</li>
+</ul>
+</div>
+
+</main>
+</div>
+<script>mermaid.initialize({startOnLoad:true,theme:'dark'});</script>
+</body>
+</html>

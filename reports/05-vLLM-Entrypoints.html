@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>vLLM Entrypoints 服务入口深度解析 — CJ-Note</title>
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="vLLM Entrypoints 服务入口深度解析">
+  <meta name="report-type"  content="repo">
+  <meta name="report-date"  content="2026-04-10">
+  <meta name="report-tags"  content="vllm, framework">
+  <meta name="report-desc"  content="OpenAI 兼容 API Server、gRPC 服务、LLM/AsyncLLM 离线接口的架构设计与请求处理流程详解">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #0d1117; --surface: #161b22; --border: #30363d;
+      --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+      --green: #3fb950; --yellow: #d29922; --red: #f85149;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font-sans);
+           line-height: 1.7; padding: 0 1rem; }
+    .page-wrap { max-width: 900px; margin: 0 auto; padding: 2rem 0 4rem; }
+
+    /* Header */
+    .report-header { border-bottom: 1px solid var(--border); padding-bottom: 1.5rem; margin-bottom: 2rem; }
+    .report-header h1 { font-size: 1.9rem; color: var(--accent); margin-bottom: .5rem; }
+    .meta { color: var(--muted); font-size: .85rem; display: flex; gap: 1.5rem; flex-wrap: wrap; }
+    .meta span::before { content: "• "; }
+    .meta span:first-child::before { content: ""; }
+    .back-link { display: inline-block; margin-bottom: 1rem; color: var(--muted);
+                 text-decoration: none; font-size: .85rem; }
+    .back-link:hover { color: var(--accent); }
+
+    /* Sections */
+    h2 { font-size: 1.3rem; color: var(--text); margin: 2.5rem 0 .8rem;
+         padding-bottom: .4rem; border-bottom: 1px solid var(--border); }
+    h3 { font-size: 1.05rem; color: var(--accent); margin: 1.5rem 0 .5rem; }
+    h4 { font-size: .95rem; color: var(--muted); margin: 1rem 0 .3rem; text-transform: uppercase;
+         letter-spacing: .05em; }
+    p { margin-bottom: 1rem; color: var(--text); }
+
+    /* TL;DR box */
+    .tldr { background: var(--surface); border: 1px solid var(--accent);
+            border-left: 4px solid var(--accent); border-radius: 6px;
+            padding: 1rem 1.2rem; margin: 1.5rem 0; }
+    .tldr h3 { color: var(--accent); margin: 0 0 .5rem; font-size: .9rem;
+               text-transform: uppercase; letter-spacing: .1em; }
+    .tldr ul { padding-left: 1.2rem; }
+    .tldr li { margin-bottom: .3rem; }
+
+    /* Key-value info grid */
+    .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                 gap: .75rem; margin: 1rem 0 1.5rem; }
+    .info-card { background: var(--surface); border: 1px solid var(--border);
+                 border-radius: 6px; padding: .8rem 1rem; }
+    .info-card .label { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em;
+                        color: var(--muted); margin-bottom: .3rem; }
+    .info-card .value { font-size: 1.1rem; font-weight: 600; color: var(--accent);
+                        font-family: var(--font-mono); }
+
+    /* Code blocks */
+    pre { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+          padding: 1rem 1.2rem; overflow-x: auto; margin: 1rem 0; font-size: .85rem;
+          font-family: var(--font-mono); line-height: 1.5; }
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 3px;
+           padding: .15em .4em; font-size: .85em; font-family: var(--font-mono); }
+    pre code { background: none; border: none; padding: 0; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .9rem; }
+    th { background: var(--surface); color: var(--muted); font-weight: 600; text-align: left;
+         padding: .6rem .8rem; border: 1px solid var(--border); font-size: .8rem;
+         text-transform: uppercase; letter-spacing: .04em; }
+    td { padding: .6rem .8rem; border: 1px solid var(--border); vertical-align: top; }
+    tr:nth-child(even) td { background: rgba(255,255,255,.02); }
+
+    /* Chart containers */
+    .chart-wrap { background: var(--surface); border: 1px solid var(--border);
+                  border-radius: 8px; padding: 1.2rem; margin: 1.2rem 0; }
+    .chart-wrap h4 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+                     letter-spacing: .05em; margin-bottom: .8rem; }
+    .chart-wrap canvas { max-height: 320px; }
+
+    /* Mermaid diagrams */
+    .diagram-wrap { background: var(--surface); border: 1px solid var(--border);
+                    border-radius: 8px; padding: 1.5rem; margin: 1.2rem 0;
+                    overflow-x: auto; text-align: center; }
+    .diagram-wrap h4 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+                       letter-spacing: .05em; margin-bottom: 1rem; text-align: left; }
+
+    /* Callout boxes */
+    .callout { border-radius: 6px; padding: .8rem 1rem; margin: 1rem 0;
+               border-left: 4px solid; }
+    .callout.note { background: rgba(88,166,255,.07); border-color: var(--accent); }
+    .callout.tip  { background: rgba(63,185,80,.07);  border-color: var(--green); }
+    .callout.warn { background: rgba(210,153,34,.07); border-color: var(--yellow); }
+    .callout.key  { background: rgba(248,81,73,.07);  border-color: var(--red); }
+    .callout strong { display: block; margin-bottom: .3rem; font-size: .85rem;
+                      text-transform: uppercase; letter-spacing: .04em; }
+
+    /* Reference list */
+    .refs ol { padding-left: 1.5rem; }
+    .refs li { margin-bottom: .5rem; font-size: .9rem; color: var(--muted); }
+    .refs a { color: var(--accent); }
+
+    /* TOC */
+    .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+           padding: 1rem 1.2rem; margin: 0 0 2rem; font-size: .9rem; }
+    .toc h3 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+              letter-spacing: .1em; margin-bottom: .6rem; }
+    .toc ol { padding-left: 1.3rem; }
+    .toc li { margin-bottom: .25rem; }
+    .toc a { color: var(--muted); text-decoration: none; }
+    .toc a:hover { color: var(--accent); }
+
+    /* Footer */
+    .report-footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border);
+                     color: var(--muted); font-size: .8rem; display: flex; justify-content: space-between; }
+  </style>
+</head>
+<body>
+<div class="page-wrap">
+
+  <a href="../index.html" class="back-link">← Back to CJ-Note</a>
+
+  <header class="report-header">
+    <h1>vLLM Entrypoints 服务入口深度解析</h1>
+    <div class="meta">
+      <span>TYPE: REPO ANALYSIS</span>
+      <span>DATE: 2026-04-10</span>
+      <span>TOPIC: Entrypoints / API Server / gRPC / Configuration</span>
+    </div>
+  </header>
+
+  <!-- TL;DR -->
+  <div class="tldr">
+    <h3>TL;DR</h3>
+    <ul>
+      <li>vLLM 提供三类入口：<code>LLM</code> 同步离线批处理、<code>AsyncLLM</code> 驱动的 OpenAI 兼容 HTTP Server、以及面向微服务的 gRPC Server。</li>
+      <li>OpenAI API Server 基于 FastAPI + uvicorn，各端点（chat/completion/embedding）分别由独立 Serving 类处理，支持 SSE 流式和非流式两种响应模式。</li>
+      <li><code>LLM.generate()</code> 底层循环调用 <code>engine.step()</code> 直至所有请求完成，适合脚本/批处理场景；<code>AsyncLLM</code> 则通过 async generator 实现真正的异步流式输出。</li>
+      <li>所有配置收敛到 <code>VllmConfig</code>，由 <code>EngineArgs.create_engine_config()</code> 从命令行参数生成，再下发给 ModelConfig、CacheConfig、SchedulerConfig、ParallelConfig 等十余个子配置对象。</li>
+      <li>Tokenizer 池（TokenizerGroup）支持本地单实例和 Ray remote actor 两种模式；增量 detokenize 采用"新旧文本取差值"策略，避免逐 token 全量解码。</li>
+    </ul>
+  </div>
+
+  <!-- Table of Contents -->
+  <nav class="toc">
+    <h3>Contents</h3>
+    <ol>
+      <li><a href="#overview">Entrypoints 概述</a></li>
+      <li><a href="#llm-class">LLM 类（离线批量推理）</a></li>
+      <li><a href="#openai-server">OpenAI API Server</a></li>
+      <li><a href="#api-endpoints">API 端点设计</a></li>
+      <li><a href="#request-flow">请求处理流程</a></li>
+      <li><a href="#grpc-server">gRPC Server</a></li>
+      <li><a href="#vllm-config">配置系统（VllmConfig）</a></li>
+      <li><a href="#tokenizer">Tokenizer 管理</a></li>
+    </ol>
+  </nav>
+
+  <!-- ── 1. Entrypoints 概述 ──────────────────────────── -->
+  <section id="overview">
+    <h2>1. Entrypoints 概述</h2>
+    <p>vLLM 的 entrypoints 目录提供了三种对外接口，覆盖从脚本批处理到生产级 HTTP/gRPC 服务的全部使用场景。</p>
+
+    <div class="diagram-wrap">
+      <h4>Entrypoints 目录结构</h4>
+      <div class="mermaid">
+graph TD
+    A["vllm/entrypoints/"] --> B["llm.py<br/>离线推理主接口"]
+    A --> C["openai/"]
+    A --> D["grpc/"]
+    C --> C1["api_server.py<br/>FastAPI 应用主文件"]
+    C --> C2["serving_chat.py<br/>/v1/chat/completions"]
+    C --> C3["serving_completion.py<br/>/v1/completions"]
+    C --> C4["serving_embedding.py<br/>/v1/embeddings"]
+    C --> C5["serving_tokenization.py"]
+    C --> C6["serving_models.py<br/>/v1/models"]
+    C --> C7["protocol.py<br/>OpenAI API 协议类型定义"]
+    D --> D1["grpc_server.py"]
+    D --> D2["grpc_client.py"]
+      </div>
+    </div>
+
+    <pre><code>vllm/entrypoints/
+├── llm.py                    ← 离线推理主接口
+├── openai/                   ← OpenAI 兼容 HTTP API
+│   ├── api_server.py         ← FastAPI 应用主文件
+│   ├── serving_chat.py       ← /v1/chat/completions
+│   ├── serving_completion.py ← /v1/completions
+│   ├── serving_embedding.py  ← /v1/embeddings
+│   ├── serving_tokenization.py
+│   ├── serving_models.py     ← /v1/models
+│   └── protocol.py           ← OpenAI API 协议类型定义
+└── grpc/                     ← gRPC 高性能接口
+    ├── grpc_server.py
+    └── grpc_client.py</code></pre>
+  </section>
+
+  <!-- ── 2. LLM 类（离线批量推理） ──────────────────────────── -->
+  <section id="llm-class">
+    <h2>2. LLM 类（离线批量推理）</h2>
+    <p>文件：<code>vllm/entrypoints/llm.py</code></p>
+
+    <h3>2.1 用户接口</h3>
+    <pre><code>class LLM:
+    """离线批量推理的主接口"""
+
+    def __init__(
+        self,
+        model: str,                         # 模型路径或 HuggingFace ID
+        tokenizer: str | None = None,
+        dtype: str = "auto",                # "bfloat16" / "float16" / "float32"
+        tensor_parallel_size: int = 1,
+        pipeline_parallel_size: int = 1,
+        data_parallel_size: int = 1,
+        gpu_memory_utilization: float = 0.9,
+        max_model_len: int | None = None,
+        enable_prefix_caching: bool = True,
+        enable_chunked_prefill: bool = True,
+        quantization: str | None = None,    # "awq" / "fp8" / "gptq" / ...
+        enforce_eager: bool = False,         # True = 禁用 CUDAGraph
+        kv_cache_dtype: str = "auto",
+        speculative_config: dict | None = None,
+        lora_config: LoRAConfig | None = None,
+        ...
+    )
+
+    # 文本补全
+    def generate(
+        self,
+        prompts: list[str | dict | TokensPrompt],
+        sampling_params: SamplingParams | list[SamplingParams] | None = None,
+        use_tqdm: bool = True,
+    ) -> list[RequestOutput]: ...
+
+    # 聊天补全
+    def chat(
+        self,
+        messages: list[ChatCompletionMessageParam] | list[list[...]],
+        sampling_params: SamplingParams | None = None,
+        chat_template: str | None = None,
+        ...
+    ) -> list[RequestOutput]: ...
+
+    # 向量嵌入
+    def embed(
+        self,
+        inputs: list[str | TokensPrompt],
+        pooling_params: PoolingParams | None = None,
+    ) -> list[EmbeddingRequestOutput]: ...
+
+    # Token 编解码
+    def encode(self, prompts: list[str]) -> list[list[int]]: ...
+    def decode(self, sequences: list[list[int]]) -> list[str]: ...</code></pre>
+
+    <h3>2.2 generate() 内部流程</h3>
+
+    <div class="diagram-wrap">
+      <h4>LLM.generate() 执行流程</h4>
+      <div class="mermaid">
+flowchart TD
+    A["LLM.generate(prompts, params)"] --> B["1. 解析输入\nstr → 统一 PromptType 格式"]
+    B --> C["2. 批量 add_request()\nfor i, prompt, param in zip(prompts, params):\n    engine.add_request(f'req-{i}', prompt, param)"]
+    C --> D{"has_unfinished_requests()?"}
+    D -->|Yes| E["engine.step()\n→ step_outputs"]
+    E --> F["收集已完成请求\noutputs_dict[id] = output"]
+    F --> D
+    D -->|No| G["4. 按原始顺序返回\n[outputs_dict[f'req-{i}'] for i in range(N)]"]
+      </div>
+    </div>
+
+    <pre><code>LLM.generate(prompts, params)
+       │
+       ├── 1. 解析输入（str → 统一 PromptType 格式）
+       │
+       ├── 2. 批量 add_request()
+       │      for i, (prompt, param) in enumerate(zip(prompts, params)):
+       │          request_id = f"req-{i}"
+       │          self._llm_engine.add_request(request_id, prompt, param)
+       │
+       ├── 3. 循环推理直到所有请求完成
+       │      outputs_dict = {}
+       │      while self._llm_engine.has_unfinished_requests():
+       │          step_outputs = self._llm_engine.step()
+       │          for output in step_outputs:
+       │              if output.finished:
+       │                  outputs_dict[output.request_id] = output
+       │
+       └── 4. 按原始顺序返回结果
+              return [outputs_dict[f"req-{i}"] for i in range(len(prompts))]</code></pre>
+  </section>
+
+  <!-- ── 3. OpenAI API Server ──────────────────────────── -->
+  <section id="openai-server">
+    <h2>3. OpenAI API Server</h2>
+    <p>文件：<code>vllm/entrypoints/openai/api_server.py</code></p>
+
+    <h3>3.1 FastAPI 应用架构</h3>
+    <pre><code># 创建 FastAPI 应用
+app = FastAPI()
+
+# 全局 AsyncLLM 引擎
+engine: AsyncLLM
+
+# 各端点的 Serving 类
+chat: OpenAIServingChat
+completion: OpenAIServingCompletion
+embedding: OpenAIServingEmbedding
+tokenization: OpenAIServingTokenization</code></pre>
+
+    <h3>3.2 启动流程</h3>
+
+    <div class="diagram-wrap">
+      <h4>API Server 启动序列</h4>
+      <div class="mermaid">
+sequenceDiagram
+    participant CLI as python -m vllm.entrypoints.openai.api_server
+    participant Args as EngineArgs
+    participant Engine as AsyncLLM
+    participant Serving as Serving Classes
+    participant UV as uvicorn
+
+    CLI->>Args: 1. 解析命令行参数 → VllmConfig
+    Args->>Engine: 2. 创建 AsyncLLM(vllm_config)
+    Engine->>Engine: 初始化 EngineCore 后端进程
+    Engine->>Serving: 3. 创建各 Serving 类
+    Note over Serving: OpenAIServingChat<br/>OpenAIServingCompletion<br/>OpenAIServingEmbedding
+    Serving->>UV: 4. 启动 uvicorn HTTP 服务器
+    UV->>UV: uvicorn.run(app, host=host, port=port)
+      </div>
+    </div>
+
+    <pre><code>python -m vllm.entrypoints.openai.api_server --model ...
+       │
+       ├── 1. 解析命令行参数 → VllmConfig
+       │
+       ├── 2. 创建 AsyncLLM(vllm_config)
+       │      └── 初始化 EngineCore 后端进程
+       │
+       ├── 3. 创建各 Serving 类
+       │      chat = OpenAIServingChat(engine, model_config, ...)
+       │      completion = OpenAIServingCompletion(...)
+       │      ...
+       │
+       └── 4. 启动 uvicorn HTTP 服务器
+              uvicorn.run(app, host=host, port=port)</code></pre>
+  </section>
+
+  <!-- ── 4. API 端点设计 ──────────────────────────── -->
+  <section id="api-endpoints">
+    <h2>4. API 端点设计</h2>
+
+    <h3>4.1 端点列表</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>方法</th>
+          <th>路径</th>
+          <th>功能</th>
+          <th>是否流式</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><code>POST</code></td><td><code>/v1/completions</code></td><td>文本补全</td><td>可选</td></tr>
+        <tr><td><code>POST</code></td><td><code>/v1/chat/completions</code></td><td>聊天补全</td><td>可选</td></tr>
+        <tr><td><code>POST</code></td><td><code>/v1/embeddings</code></td><td>向量嵌入</td><td>否</td></tr>
+        <tr><td><code>GET</code></td><td><code>/v1/models</code></td><td>模型列表</td><td>否</td></tr>
+        <tr><td><code>GET</code></td><td><code>/health</code></td><td>健康检查</td><td>否</td></tr>
+        <tr><td><code>POST</code></td><td><code>/tokenize</code></td><td>Tokenize（扩展）</td><td>否</td></tr>
+        <tr><td><code>POST</code></td><td><code>/detokenize</code></td><td>Detokenize（扩展）</td><td>否</td></tr>
+        <tr><td><code>GET</code></td><td><code>/metrics</code></td><td>Prometheus 指标</td><td>否</td></tr>
+        <tr><td><code>POST</code></td><td><code>/v1/score</code></td><td>Reranker 评分</td><td>否</td></tr>
+      </tbody>
+    </table>
+
+    <h3>4.2 Chat Completions 端点</h3>
+    <pre><code>@app.post("/v1/chat/completions")
+async def create_chat_completion(
+    request: ChatCompletionRequest,
+    raw_request: Request,
+):
+    # 1. 验证请求
+    generator = await chat.create_chat_completion(request, raw_request)
+
+    # 2. 流式响应
+    if request.stream:
+        return StreamingResponse(content=generator, media_type="text/event-stream")
+
+    # 3. 非流式响应
+    else:
+        return await generator</code></pre>
+
+    <h3>4.3 OpenAI 协议数据结构</h3>
+    <pre><code># vllm/entrypoints/openai/protocol.py
+
+class ChatCompletionRequest(BaseModel):
+    model: str
+    messages: list[ChatCompletionMessageParam]
+    max_tokens: int | None = None           # 最大生成长度
+    temperature: float = 1.0
+    top_p: float = 1.0
+    n: int = 1                              # 生成序列数
+    stream: bool = False
+    stop: str | list[str] | None = None
+    presence_penalty: float = 0.0
+    frequency_penalty: float = 0.0
+    seed: int | None = None
+    logprobs: bool = False
+    top_logprobs: int | None = None
+
+    # vLLM 扩展字段
+    guided_json: Any | None = None          # JSON Schema 约束
+    guided_regex: str | None = None         # 正则约束
+    guided_grammar: str | None = None       # GBNF 语法约束
+
+class ChatCompletionResponse(BaseModel):
+    id: str                                 # "chatcmpl-xxx"
+    object: str = "chat.completion"
+    created: int                            # Unix 时间戳
+    model: str
+    choices: list[ChatCompletionResponseChoice]
+    usage: UsageInfo
+
+class ChatCompletionResponseChoice(BaseModel):
+    index: int
+    message: ChatMessage
+    finish_reason: str | None               # "stop" / "length" / "tool_calls"
+    logprobs: ChatCompletionLogProbs | None</code></pre>
+  </section>
+
+  <!-- ── 5. 请求处理流程 ──────────────────────────── -->
+  <section id="request-flow">
+    <h2>5. 请求处理流程</h2>
+
+    <h3>5.1 Chat Completions 完整流程</h3>
+
+    <div class="diagram-wrap">
+      <h4>Chat Completions 端到端调用链</h4>
+      <div class="mermaid">
+sequenceDiagram
+    participant Client as HTTP Client
+    participant Router as FastAPI Router
+    participant Serving as OpenAIServingChat
+    participant Engine as AsyncLLM
+
+    Client->>Router: POST /v1/chat/completions<br/>{"model":"...", "messages":[...], "stream":true}
+    Router->>Serving: create_chat_completion(request)
+    Serving->>Serving: 1. apply_chat_template(messages) → prompt_str
+    Serving->>Serving: 2. 构建 SamplingParams
+    Serving->>Engine: 3. engine.generate(request_id, inputs, params)
+    Engine-->>Serving: async generator
+
+    alt stream=true
+        Serving-->>Client: StreamingResponse (text/event-stream)
+        loop 每个 output
+            Engine-->>Serving: output chunk
+            Serving-->>Client: data: {chunk.json()}\n\n
+        end
+        Serving-->>Client: data: [DONE]\n\n
+    else stream=false
+        loop 收集全部输出
+            Engine-->>Serving: output
+        end
+        Serving-->>Client: ChatCompletionResponse (JSON)
+    end
+      </div>
+    </div>
+
+    <pre><code>HTTP Client
+    │ POST /v1/chat/completions
+    │ {"model": "...", "messages": [...], "stream": true}
+    │
+    ▼
+FastAPI Router
+    │ create_chat_completion(request)
+    │
+    ▼
+OpenAIServingChat.create_chat_completion()
+    │
+    ├── 1. 解析 messages → prompt
+    │      apply_chat_template(messages) → prompt_str
+    │
+    ├── 2. 构建 SamplingParams
+    │      SamplingParams(
+    │          temperature=request.temperature,
+    │          max_tokens=request.max_tokens,
+    │          stop=request.stop,
+    │          ...
+    │      )
+    │
+    ├── 3. 提交给 AsyncLLM
+    │      generator = engine.generate(
+    │          request_id=f"chatcmpl-{uuid}",
+    │          inputs=prompt,
+    │          params=sampling_params,
+    │      )
+    │
+    ├── 4. 流式模式（stream=true）
+    │      async def stream_generator():
+    │          async for output in generator:
+    │              chunk = build_sse_chunk(output)
+    │              yield f"data: {chunk.json()}\n\n"
+    │          yield "data: [DONE]\n\n"
+    │
+    └── 5. 非流式模式（stream=false）
+           async def collect():
+               final_output = None
+               async for output in generator:
+                   final_output = output
+               return build_response(final_output)</code></pre>
+
+    <h3>5.2 SSE 流式输出格式</h3>
+    <pre><code>HTTP/1.1 200 OK
+Content-Type: text/event-stream
+
+data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"delta":{"role":"assistant","content":""},"index":0}]}
+
+data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"delta":{"content":"Hello"},"index":0}]}
+
+data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"delta":{"content":" World"},"index":0}]}
+
+data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"delta":{},"finish_reason":"stop","index":0}]}
+
+data: [DONE]</code></pre>
+  </section>
+
+  <!-- ── 6. gRPC Server ──────────────────────────── -->
+  <section id="grpc-server">
+    <h2>6. gRPC Server</h2>
+    <p>文件：<code>vllm/entrypoints/grpc/</code></p>
+
+    <h3>6.1 适用场景</h3>
+    <p>gRPC 接口适合：</p>
+    <ul style="padding-left:1.4rem; margin-bottom:1rem;">
+      <li style="margin-bottom:.3rem;">微服务间内部调用（低延迟、二进制协议）</li>
+      <li style="margin-bottom:.3rem;">需要强类型协议定义的场景</li>
+      <li style="margin-bottom:.3rem;">高并发内部服务</li>
+    </ul>
+
+    <h3>6.2 接口对比</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>特性</th>
+          <th>OpenAI HTTP</th>
+          <th>gRPC</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>协议</td><td>HTTP/1.1 + JSON</td><td>HTTP/2 + Protobuf</td></tr>
+        <tr><td>序列化</td><td>JSON（文本）</td><td>Protobuf（二进制）</td></tr>
+        <tr><td>流式</td><td>SSE</td><td>gRPC 流</td></tr>
+        <tr><td>延迟</td><td>高（解析开销）</td><td>低（二进制）</td></tr>
+        <tr><td>兼容性</td><td>高（OpenAI 生态）</td><td>低（需要 gRPC client）</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ── 7. 配置系统（VllmConfig） ──────────────────────────── -->
+  <section id="vllm-config">
+    <h2>7. 配置系统（VllmConfig）</h2>
+    <p>文件：<code>vllm/config/</code></p>
+
+    <h3>7.1 配置层次结构</h3>
+
+    <div class="diagram-wrap">
+      <h4>VllmConfig 层次结构</h4>
+      <div class="mermaid">
+graph TD
+    A["用户代码 / 命令行参数"] --> B["EngineArgs（命令行参数容器）"]
+    B -->|"EngineArgs.create_engine_config()"| C["VllmConfig（核心配置）"]
+    C --> D["ModelConfig"]
+    C --> E["TokenizerPoolConfig"]
+    C --> F["LoadConfig"]
+    C --> G["CacheConfig"]
+    C --> H["SchedulerConfig"]
+    C --> I["DeviceConfig"]
+    C --> J["ParallelConfig"]
+    C --> K["AttentionConfig"]
+    C --> L["CompilationConfig"]
+    C --> M["SpeculativeConfig"]
+    C --> N["LoRAConfig"]
+    C --> O["KVTransferConfig"]
+    C --> P["ObservabilityConfig"]
+    C --> Q["QuantizationConfig"]
+      </div>
+    </div>
+
+    <pre><code>用户代码/命令行参数
+    │
+    ▼
+EngineArgs（命令行参数容器）
+    │ EngineArgs.create_engine_config()
+    ▼
+VllmConfig（核心配置，传递给所有子系统）
+    ├── ModelConfig           # 模型结构配置
+    ├── TokenizerPoolConfig   # Tokenizer 池配置
+    ├── LoadConfig            # 权重加载配置
+    ├── CacheConfig           # KV Cache 配置
+    ├── SchedulerConfig       # 调度器配置
+    ├── DeviceConfig          # 设备（cuda/cpu/xpu）
+    ├── ParallelConfig        # 并行策略
+    ├── AttentionConfig       # Attention 后端
+    ├── CompilationConfig     # CUDAGraph/torch.compile
+    ├── SpeculativeConfig     # 推测解码
+    ├── LoRAConfig            # LoRA 适配器
+    ├── KVTransferConfig      # P/D 分离
+    ├── ObservabilityConfig   # 监控/追踪
+    └── QuantizationConfig    # 量化</code></pre>
+
+    <h3>7.2 关键配置参数速查</h3>
+    <pre><code># ModelConfig
+ModelConfig(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    dtype="bfloat16",          # "auto"/"float16"/"bfloat16"/"float32"
+    max_model_len=8192,
+    quantization=None,         # "awq"/"fp8"/"gptq"/"marlin"/"bitsandbytes"
+    rope_scaling=None,         # {"factor": 4.0, "type": "yarn"}
+    trust_remote_code=False,
+    seed=0,
+)
+
+# CacheConfig
+CacheConfig(
+    block_size=16,
+    gpu_memory_utilization=0.9,
+    swap_space=4,              # GiB
+    cache_dtype="auto",        # "auto"/"fp8"/"fp8_e5m2"/"fp8_e4m3"
+    enable_prefix_caching=True,
+    prefix_caching_hash_algo="xxhash",
+    num_gpu_blocks_override=None,  # 手动指定 GPU 块数（调试用）
+)
+
+# SchedulerConfig
+SchedulerConfig(
+    max_num_batched_tokens=16384,
+    max_num_seqs=1024,
+    enable_chunked_prefill=True,
+    max_num_partial_prefills=1,
+    long_prefill_token_threshold=0,
+    scheduling_policy="fcfs",  # "fcfs" 或 "priority"
+    num_scheduler_steps=1,
+    multi_step_stream_outputs=True,
+)
+
+# ParallelConfig
+ParallelConfig(
+    tensor_parallel_size=1,
+    pipeline_parallel_size=1,
+    data_parallel_size=1,
+    enable_expert_parallel=False,
+    prefill_context_parallel_size=1,
+    worker_use_ray=False,
+)</code></pre>
+  </section>
+
+  <!-- ── 8. Tokenizer 管理 ──────────────────────────── -->
+  <section id="tokenizer">
+    <h2>8. Tokenizer 管理</h2>
+    <p>文件：<code>vllm/tokenizers/</code></p>
+
+    <h3>8.1 TokenizerGroup</h3>
+    <p>为了支持并发 tokenize，vLLM 使用 TokenizerGroup（tokenizer 池）：</p>
+    <pre><code>class TokenizerGroup:
+    """Tokenizer 池（可选：Ray remote actor，支持真正并行）"""
+
+    def __init__(self, tokenizer_id, max_num_seqs, ...):
+        # 本地：单个 tokenizer 实例
+        self.tokenizer = get_tokenizer(tokenizer_id, ...)
+
+        # Ray 模式：多个 tokenizer actor（CPU 并行）
+        if use_ray:
+            self.tokenizer_actors = [
+                RayTokenizerGroupPool.remote(...) for _ in range(max_num_seqs)
+            ]
+
+    async def encode(self, prompt: str) -> list[int]:
+        return self.tokenizer.encode(prompt)
+
+    async def decode(self, token_ids: list[int]) -> str:
+        return self.tokenizer.decode(token_ids)</code></pre>
+
+    <h3>8.2 增量 Detokenize</h3>
+    <p>OutputProcessor 使用增量 detokenize 避免重复解码：</p>
+
+    <div class="diagram-wrap">
+      <h4>增量 Detokenize 策略</h4>
+      <div class="mermaid">
+flowchart LR
+    A["token_ids[:-1]"] -->|"decode()"| B["prev_text"]
+    C["token_ids"] -->|"decode()"| D["curr_text"]
+    B --> E["delta = curr_text[len(prev_text):]"]
+    D --> E
+    E --> F["输出增量文本 delta"]
+    F --> G["缓存 curr_text\n供下次使用"]
+      </div>
+    </div>
+
+    <pre><code>每步新 token 时:
+  # 不能简单 decode([new_token])，因为 tokenizer 可能有上下文依赖
+  # 正确做法：decode([last_few_tokens + new_token]) 然后取差值
+
+  prev_text = decode(token_ids[:-1])   # 上次的完整文本
+  curr_text = decode(token_ids)        # 包含新 token 的完整文本
+  delta = curr_text[len(prev_text):]   # 增量部分
+
+  # 优化：缓存上次解码结果，避免重复解码
+  # 通常只需解码最后 3-5 个 token 来捕捉跨 token 边界的字符</code></pre>
+
+    <div class="callout note">
+      <strong>Note</strong>
+      增量 detokenize 的上下文依赖问题源于 BPE / SentencePiece 中字节级别的 token 边界问题。比如 "▁Hello" 这个 token 在不同上下文下解码结果不同，因此必须携带前缀 context 一起解码再取差值，而不能孤立解码单个新 token。
+    </div>
+  </section>
+
+  <!-- ── References ──────────────────────────── -->
+  <section id="refs" class="refs">
+    <h2>References</h2>
+    <ol>
+      <li><a href="https://github.com/vllm-project/vllm/blob/main/vllm/entrypoints/llm.py">vllm/entrypoints/llm.py — 离线推理主接口</a></li>
+      <li><a href="https://github.com/vllm-project/vllm/blob/main/vllm/entrypoints/openai/api_server.py">vllm/entrypoints/openai/api_server.py — FastAPI 应用入口</a></li>
+      <li><a href="https://github.com/vllm-project/vllm/blob/main/vllm/entrypoints/openai/protocol.py">vllm/entrypoints/openai/protocol.py — OpenAI API 协议类型定义</a></li>
+      <li><a href="https://github.com/vllm-project/vllm/tree/main/vllm/entrypoints/grpc">vllm/entrypoints/grpc/ — gRPC 服务接口</a></li>
+      <li><a href="https://github.com/vllm-project/vllm/tree/main/vllm/config">vllm/config/ — VllmConfig 配置系统</a></li>
+      <li><a href="https://github.com/vllm-project/vllm/tree/main/vllm/tokenizers">vllm/tokenizers/ — TokenizerGroup 实现</a></li>
+      <li><a href="https://docs.vllm.ai/en/latest/">vLLM 官方文档</a></li>
+    </ol>
+  </section>
+
+  <footer class="report-footer">
+    <span>CJ-Note · LLM Inference Research</span>
+    <span>Generated 2026-04-10</span>
+  </footer>
+</div>
+
+<script>
+  // Initialize Mermaid with dark theme
+  mermaid.initialize({ startOnLoad: true, theme: 'dark',
+    themeVariables: { background: '#161b22', primaryColor: '#1f6feb',
+                      primaryTextColor: '#e6edf3', lineColor: '#8b949e' }});
+</script>
+</body>
+</html>

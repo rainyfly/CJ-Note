@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang Distributed 分布式系统深度解析">
+  <meta name="report-type"  content="repo">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang Distributed 分布式系统深度解析">
+  <meta name="report-type"  content="sglang">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+<title>SGLang Distributed 分布式系统深度解析</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}:root{--bg:#0d1117;--bg2:#161b22;--bg3:#1c2128;--border:#30363d;--text:#e6edf3;--text2:#8b949e;--text3:#656d76;--cyan:#39d0d8;--blue:#58a6ff;--green:#3fb950;--yellow:#e3b341;--orange:#f78166;--purple:#bc8cff;--red:#f85149;--font-mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace}html{scroll-behavior:smooth}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif;background:var(--bg);color:var(--text);line-height:1.75;font-size:16px}.page-wrap{display:grid;grid-template-columns:260px 1fr;min-height:100vh}@media(max-width:900px){.page-wrap{grid-template-columns:1fr}.sidebar{display:none}}.sidebar{position:sticky;top:0;height:100vh;overflow-y:auto;background:var(--bg2);border-right:1px solid var(--border);padding:24px 16px}.sidebar-brand{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:16px}.toc a{display:block;padding:6px 8px;font-size:13px;color:var(--text2);text-decoration:none;border-radius:6px;margin-bottom:2px}.toc a:hover{background:var(--bg3);color:var(--cyan)}main{max-width:960px;margin:0 auto;padding:48px 32px}h1{font-size:2.2rem;margin-bottom:8px;background:linear-gradient(135deg,var(--cyan),var(--blue));-webkit-background-clip:text;-webkit-text-fill-color:transparent}.subtitle{color:var(--text2);font-size:1rem;margin-bottom:40px}h2{font-size:1.5rem;color:var(--cyan);margin:48px 0 16px;padding-bottom:8px;border-bottom:1px solid var(--border)}h3{font-size:1.15rem;color:var(--blue);margin:32px 0 12px}h4{font-size:1rem;color:var(--purple);margin:24px 0 8px}p,li{margin-bottom:12px}ul,ol{padding-left:24px}a{color:var(--blue);text-decoration:none}.card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px;margin:16px 0}table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px}th,td{padding:10px 14px;text-align:left;border:1px solid var(--border)}th{background:var(--bg3);color:var(--cyan)}td{background:var(--bg2)}code{font-family:var(--font-mono);background:var(--bg3);padding:2px 6px;border-radius:4px;font-size:0.9em;color:var(--orange)}pre{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:16px;overflow-x:auto;margin:16px 0;font-size:13px}pre code{background:none;padding:0;color:var(--text)}.mermaid{background:var(--bg2);border-radius:12px;padding:20px;margin:16px 0;display:flex;justify-content:center}.highlight{background:rgba(57,208,216,0.08);border-left:3px solid var(--cyan);padding:16px 20px;border-radius:0 8px 8px 0;margin:16px 0}
+</style>
+</head>
+<body>
+<div class="page-wrap">
+<aside class="sidebar">
+<div class="sidebar-brand">SGLang Distributed</div>
+<nav class="toc">
+<a href="#s1">1. 分布式架构总览</a>
+<a href="#s2">2. GroupCoordinator</a>
+<a href="#s3">3. 并行策略 TP/EP/DP/PP</a>
+<a href="#s4">4. PyNccl 通信器</a>
+<a href="#s5">5. Custom AllReduce</a>
+<a href="#s6">6. 通信操作接口</a>
+<a href="#s7">7. AllReduce 路由决策</a>
+<a href="#s8">8. CUDA Graph 集成</a>
+</nav>
+</aside>
+<main>
+
+<h1>SGLang Distributed 分布式系统深度解析</h1>
+<p class="subtitle">并行状态管理、NCCL 封装、Custom AllReduce 与通信操作 -- 源码级分析</p>
+
+<!-- ============================================================ -->
+<h2 id="s1">1. 分布式架构总览</h2>
+
+<p>SGLang 的分布式模块（<code>srt/distributed/</code>）是从 vLLM 适配而来，接管了 PyTorch 原生分布式环境的控制。其核心设计原则：</p>
+
+<ul>
+<li><strong>多后端通信</strong>：在同一个进程组中支持 NCCL、Gloo、Custom AllReduce、PyMscclpp、QuickAllReduce、TorchSymmMem 等多种通信实现</li>
+<li><strong>自动路由</strong>：根据张量大小、CUDA Graph 状态、硬件拓扑自动选择最优通信路径</li>
+<li><strong>惰性初始化</strong>：通信器仅在 world_size &gt; 1 时创建</li>
+<li><strong>设备无关</strong>：支持 CUDA、ROCm (HIP)、NPU、XPU、HPU、CPU 等多种加速器</li>
+</ul>
+
+<div class="mermaid">
+graph TB
+    subgraph "分布式模块全景"
+        A["parallel_state.py<br/>GroupCoordinator<br/>全局并行状态管理"]
+        B["communication_op.py<br/>all_reduce / all_gather<br/>broadcast_tensor_dict"]
+        C["__init__.py<br/>统一导出接口"]
+
+        subgraph "device_communicators/"
+            D["pynccl.py<br/>PyNcclCommunicator"]
+            E["pynccl_wrapper.py<br/>NCCL C 库绑定"]
+            F["custom_all_reduce.py<br/>CustomAllreduce"]
+            G["custom_all_reduce_ops.py<br/>IPC 共享内存操作"]
+            H["shm_broadcast.py<br/>SharedMemory 广播"]
+            I["pymscclpp.py<br/>PyMscclpp 通信"]
+            J["torch_symm_mem.py<br/>Torch SymmMem"]
+            K["quick_all_reduce.py<br/>QuickAllReduce (AMD)"]
+        end
+    end
+
+    A --> B
+    A --> D
+    A --> F
+    A --> I
+    A --> J
+    A --> K
+    B --> A
+    C --> A
+    C --> B
+    D --> E
+
+    style A fill:#1c2128,stroke:#39d0d8,color:#e6edf3
+    style D fill:#1c2128,stroke:#58a6ff,color:#e6edf3
+    style F fill:#1c2128,stroke:#3fb950,color:#e6edf3
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s2">2. GroupCoordinator -- 进程组协调器</h2>
+
+<p><code>GroupCoordinator</code> 是 SGLang 分布式的核心类，封装了 PyTorch <code>ProcessGroup</code>，并集成了多种高性能通信后端。</p>
+
+<h3>2.1 核心属性</h3>
+
+<table>
+<tr><th>属性</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>rank</code></td><td>int</td><td>全局 rank</td></tr>
+<tr><td><code>ranks</code></td><td>List[int]</td><td>组内所有全局 rank</td></tr>
+<tr><td><code>world_size</code></td><td>int</td><td>组大小</td></tr>
+<tr><td><code>local_rank</code></td><td>int</td><td>节点内 rank（用于设备分配）</td></tr>
+<tr><td><code>rank_in_group</code></td><td>int</td><td>组内 rank 索引</td></tr>
+<tr><td><code>device_group</code></td><td>ProcessGroup</td><td>GPU 通信组（NCCL/Mooncake 后端）</td></tr>
+<tr><td><code>cpu_group</code></td><td>ProcessGroup</td><td>CPU 通信组（Gloo 后端）</td></tr>
+<tr><td><code>pynccl_comm</code></td><td>PyNcclCommunicator</td><td>PyNccl 通信器实例</td></tr>
+<tr><td><code>ca_comm</code></td><td>CustomAllreduce</td><td>自定义 AllReduce 通信器</td></tr>
+<tr><td><code>qr_comm</code></td><td>QuickAllReduce</td><td>AMD 快速 AllReduce</td></tr>
+<tr><td><code>torch_symm_mem_comm</code></td><td>TorchSymmMemCommunicator</td><td>Torch 对称内存 AllReduce</td></tr>
+<tr><td><code>mq_broadcaster</code></td><td>MessageQueue</td><td>共享内存广播器</td></tr>
+</table>
+
+<h3>2.2 初始化流程</h3>
+
+<div class="mermaid">
+graph TB
+    A["GroupCoordinator.__init__()"] --> B["创建 device_group<br/>(NCCL/Mooncake 后端)"]
+    A --> C["创建 cpu_group<br/>(Gloo 后端)"]
+    B --> D{use_pynccl?}
+    D -->|Yes| E["PyNcclCommunicator()"]
+    B --> F{use_custom_allreduce?}
+    F -->|Yes| G["dispatch_custom_allreduce()"]
+    G --> H["CustomAllreduce()"]
+    F -->|ROCm| I["QuickAllReduce()"]
+    B --> J{use_torch_symm_mem?}
+    J -->|Yes| K["TorchSymmMemCommunicator()"]
+    B --> L["创建硬件特定通信器<br/>HPU/XPU/NPU"]
+    B --> M{use_message_queue?}
+    M -->|Yes| N["MessageQueue.create_from_process_group()"]
+
+    style A fill:#1c2128,stroke:#39d0d8,color:#e6edf3
+    style E fill:#1c2128,stroke:#58a6ff,color:#e6edf3
+    style H fill:#1c2128,stroke:#3fb950,color:#e6edf3
+</div>
+
+<h3>2.3 自定义算子注册</h3>
+
+<p>SGLang 通过 <code>register_custom_op</code> 将 AllReduce 操作注册为 PyTorch 自定义算子，使其兼容 <code>torch.compile</code>：</p>
+
+<pre><code>@register_custom_op(mutates_args=["tensor"])
+@register_split_op()
+def inplace_all_reduce(tensor: torch.Tensor, group_name: str) -> None:
+    group = _groups[group_name]()
+    group._all_reduce_in_place(tensor)
+
+@register_custom_op(out_shape="tensor")
+def outplace_all_reduce(tensor, group_name, outplace_all_reduce_method) -> torch.Tensor:
+    group = _groups[group_name]()
+    return group._all_reduce_out_place(tensor, outplace_all_reduce_method)</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="s3">3. 并行策略 TP / EP / DP / PP</h2>
+
+<p>SGLang 通过全局状态变量管理各种并行维度。<code>parallel_state.py</code> 中定义了多组全局进程组：</p>
+
+<div class="mermaid">
+graph TB
+    subgraph "并行维度"
+        TP["Tensor Parallel (TP)<br/>模型张量切分<br/>get_tp_group()"]
+        EP["Expert Parallel (EP)<br/>MoE 专家分布<br/>get_ep_group()"]
+        DP["Data Parallel (DP)<br/>数据并行<br/>get_dp_group()"]
+        PP["Pipeline Parallel (PP)<br/>流水线并行<br/>get_pp_group()"]
+        CP["Context Parallel (CP)<br/>上下文并行<br/>get_cp_group()"]
+    end
+
+    subgraph "组合关系"
+        A["World Size = TP x EP x DP x PP"]
+        B["TP Group: 同一数据并行实例内的张量切分组"]
+        C["EP Group: 跨 TP 组的专家并行组"]
+        D["PP Group: 沿模型深度的流水线级"]
+    end
+
+    style TP fill:#1c2128,stroke:#39d0d8,color:#e6edf3
+    style EP fill:#1c2128,stroke:#58a6ff,color:#e6edf3
+    style DP fill:#1c2128,stroke:#3fb950,color:#e6edf3
+    style PP fill:#1c2128,stroke:#f78166,color:#e6edf3
+    style CP fill:#1c2128,stroke:#bc8cff,color:#e6edf3
+</div>
+
+<h3>3.1 初始化模型并行</h3>
+
+<p><code>initialize_model_parallel()</code> 函数根据给定的并行度参数计算各维度的 rank 分组：</p>
+
+<table>
+<tr><th>参数</th><th>说明</th></tr>
+<tr><td><code>tensor_model_parallel_size</code></td><td>TP 组大小（默认 1）</td></tr>
+<tr><td><code>pipeline_model_parallel_size</code></td><td>PP 组大小（默认 1）</td></tr>
+<tr><td><code>context_parallel_size</code></td><td>CP 组大小（默认 1）</td></tr>
+<tr><td><code>expert_tensor_parallel_size</code></td><td>专家张量并行度</td></tr>
+</table>
+
+<h3>3.2 全局访问器函数</h3>
+
+<table>
+<tr><th>函数</th><th>返回值</th><th>说明</th></tr>
+<tr><td><code>get_tp_group()</code></td><td>GroupCoordinator</td><td>获取当前进程的 TP 组</td></tr>
+<tr><td><code>get_tensor_model_parallel_rank()</code></td><td>int</td><td>当前 TP rank</td></tr>
+<tr><td><code>get_tensor_model_parallel_world_size()</code></td><td>int</td><td>TP 组大小</td></tr>
+<tr><td><code>get_pp_group()</code></td><td>GroupCoordinator</td><td>获取 PP 组</td></tr>
+<tr><td><code>get_dp_group()</code></td><td>GroupCoordinator</td><td>获取 DP 组</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="s4">4. PyNccl 通信器</h2>
+
+<p><code>PyNcclCommunicator</code> 通过 ctypes 绑定直接调用 NCCL C 库，绕过 PyTorch 的 NCCL 后端，获得更精细的控制（如流管理、组操作）。</p>
+
+<h3>4.1 初始化过程</h3>
+
+<ol>
+<li>加载 NCCL 动态库 (<code>NCCLLibrary</code>)</li>
+<li>Rank 0 生成 <code>ncclUniqueId</code>，通过 Gloo 或 StatelessProcessGroup 广播到其他 rank</li>
+<li>调用 <code>ncclCommInitRank</code> 创建通信句柄</li>
+<li>创建独立的 CUDA Stream</li>
+<li>执行小规模 warmup AllReduce</li>
+<li>默认设置为 <code>disabled=True</code>，仅在 CUDA Graph 捕获时通过 <code>change_state(enable=True)</code> 启用</li>
+</ol>
+
+<h3>4.2 支持的通信操作</h3>
+
+<table>
+<tr><th>方法</th><th>NCCL 调用</th><th>说明</th></tr>
+<tr><td><code>all_reduce()</code></td><td>ncclAllReduce</td><td>原地全归约（支持 SUM 等 ReduceOp）</td></tr>
+<tr><td><code>all_gather()</code></td><td>ncclAllGather / ncclBroadcast</td><td>全收集（支持不等长 sizes）</td></tr>
+<tr><td><code>reduce_scatter()</code></td><td>ncclReduceScatter / ncclReduce</td><td>归约散播（支持不等长 sizes）</td></tr>
+<tr><td><code>send()</code></td><td>ncclSend</td><td>点对点发送</td></tr>
+<tr><td><code>recv()</code></td><td>ncclRecv</td><td>点对点接收</td></tr>
+<tr><td><code>broadcast()</code></td><td>ncclBroadcast</td><td>广播</td></tr>
+<tr><td><code>group_start/end()</code></td><td>ncclGroupStart/End</td><td>组操作（合并多个通信）</td></tr>
+</table>
+
+<h3>4.3 流管理策略</h3>
+
+<div class="highlight">
+<strong>流解析逻辑 (<code>_resolve_stream</code>)：</strong>
+<ol>
+<li>若显式提供 stream 参数，使用该 stream</li>
+<li>若 <code>use_current_stream=True</code>，使用 <code>torch.cuda.current_stream()</code></li>
+<li>否则使用通信器自身的独立 stream (<code>self.stream</code>)</li>
+</ol>
+这允许在 CUDA Graph 模式下使用当前捕获流，在 eager 模式下使用独立流避免阻塞计算。
+</div>
+
+<h3>4.4 上下文并行 AllGather</h3>
+
+<p><code>cp_all_gather_into_tensor()</code> 是专为 Context Parallelism 设计的非阻塞 AllGather，利用 PyNccl 的异步特性，允许通信与计算重叠。</p>
+
+<!-- ============================================================ -->
+<h2 id="s5">5. Custom AllReduce</h2>
+
+<p><code>CustomAllreduce</code> 利用 GPU 直接 P2P 访问（NVLink/PCIe）和 IPC 共享内存实现低延迟的 AllReduce，特别适合小张量场景（默认最大 8MB）。</p>
+
+<h3>5.1 设计约束</h3>
+
+<table>
+<tr><th>约束</th><th>值</th><th>说明</th></tr>
+<tr><td>支持的 world_size</td><td>[2, 4, 6, 8]</td><td>固定支持的 GPU 数量</td></tr>
+<tr><td>最大张量大小 (CUDA)</td><td>8 MB</td><td>超过则退回 NCCL</td></tr>
+<tr><td>最大张量大小 (ROCm)</td><td>16 MB</td><td>AMD 上交叉点更高</td></tr>
+<tr><td>字节对齐</td><td>16 字节</td><td>张量大小必须是 16 的倍数</td></tr>
+<tr><td>同节点限制</td><td>必须</td><td>所有进程必须在同一节点</td></tr>
+<tr><td>NVLink 要求</td><td>world_size &gt; 2 时</td><td>超过 2 GPU 需要完全 NVLink 互联</td></tr>
+</table>
+
+<h3>5.2 IPC 共享缓冲区</h3>
+
+<div class="mermaid">
+graph LR
+    subgraph "共享缓冲区架构"
+        A["meta_ptrs<br/>同步元数据 + 临时缓冲<br/>(meta_size + max_size)"]
+        B["buffer_ptrs<br/>预注册 IPC 缓冲<br/>(max_size)"]
+        C["rank_data<br/>所有 rank 的指针元组<br/>(max_size)"]
+    end
+
+    subgraph "创建流程"
+        D["cudaMalloc()"] --> E["cudaIpcGetMemHandle()"]
+        E --> F["dist.all_gather_object()"]
+        F --> G["cudaIpcOpenMemHandle()"]
+        G --> H["每个 rank 持有<br/>所有 rank 的指针"]
+    end
+
+    style A fill:#1c2128,stroke:#39d0d8,color:#e6edf3
+    style B fill:#1c2128,stroke:#58a6ff,color:#e6edf3
+</div>
+
+<h3>5.3 AllReduce 执行路径</h3>
+
+<pre><code>def custom_all_reduce(self, input: torch.Tensor) -> Optional[torch.Tensor]:
+    if self.disabled or not self.should_custom_ar(input):
+        return None  # 退回到其他实现
+
+    if self._IS_CAPTURING:
+        if torch.cuda.is_current_stream_capturing():
+            return self.all_reduce(input, registered=not self.tms_cudagraph)
+        else:
+            return torch.zeros_like(input)  # warmup 模拟
+    else:
+        return self.all_reduce(input, registered=False)</code></pre>
+
+<h3>5.4 CUDA Graph 支持</h3>
+
+<p>通过 <code>capture()</code> 上下文管理器，在 CUDA Graph 捕获结束时调用 <code>register_graph_buffers()</code>，收集所有在图中使用的缓冲区地址并注册 IPC 句柄，使得图回放时能正确访问其他 rank 的缓冲区。</p>
+
+<h3>5.5 AMD 确定性 AllReduce</h3>
+
+<p>在 ROCm 平台上，当启用确定性推理（<code>SGLANG_ENABLE_DETERMINISTIC_INFERENCE</code>）时，使用特殊的 1-stage 内核 (<code>deterministic_all_reduce</code>) 确保固定顺序的归约操作，保证结果可复现。</p>
+
+<!-- ============================================================ -->
+<h2 id="s6">6. 通信操作接口</h2>
+
+<p><code>communication_op.py</code> 提供面向用户的高层通信接口，所有操作委托给当前 TP 组的 <code>GroupCoordinator</code>：</p>
+
+<table>
+<tr><th>函数</th><th>底层操作</th><th>说明</th></tr>
+<tr><td><code>tensor_model_parallel_all_reduce()</code></td><td><code>get_tp_group().all_reduce()</code></td><td>跨 TP 组 AllReduce</td></tr>
+<tr><td><code>tensor_model_parallel_all_gather()</code></td><td><code>get_tp_group().all_gather()</code></td><td>跨 TP 组 AllGather</td></tr>
+<tr><td><code>tensor_model_parallel_gather()</code></td><td><code>get_tp_group().gather()</code></td><td>跨 TP 组 Gather 到指定 rank</td></tr>
+<tr><td><code>broadcast_tensor_dict()</code></td><td><code>get_tp_group().broadcast_tensor_dict()</code></td><td>广播张量字典</td></tr>
+</table>
+
+<p><code>__init__.py</code> 通过通配符导出 (<code>from ... import *</code>) 将 <code>parallel_state</code>、<code>communication_op</code>、<code>utils</code> 的所有公开接口统一暴露：</p>
+
+<pre><code>from sglang.srt.distributed.communication_op import *
+from sglang.srt.distributed.parallel_state import *
+from sglang.srt.distributed.utils import *</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="s7">7. AllReduce 路由决策</h2>
+
+<p>SGLang 的 AllReduce 实现了精细的多级路由策略，根据运行时条件选择最优通信路径。</p>
+
+<div class="mermaid">
+graph TB
+    A["all_reduce(input)"] --> B{world_size == 1?}
+    B -->|Yes| Z["直接返回"]
+    B -->|No| C{AMD 确定性?}
+    C -->|Yes| D["ca_comm.deterministic_all_reduce()"]
+    C -->|No| E{CPU 张量?}
+    E -->|Yes| F{SHM 可用?}
+    F -->|Yes| G["shm_allreduce()"]
+    F -->|No| H["torch.distributed.all_reduce()"]
+    E -->|No| I{HPU/XPU/NPU?}
+    I -->|Yes| J["硬件专用通信器"]
+    I -->|No| K{Symmetric Memory?}
+    K -->|Yes| L["pynccl_comm.all_reduce()"]
+    K -->|No| M{Custom AR 适用?}
+    M -->|Yes| N["outplace_all_reduce(ca)"]
+    M -->|No| O{Quick AR 适用?}
+    O -->|Yes| P["outplace_all_reduce(qr)"]
+    O -->|No| Q{PyMscclpp 适用?}
+    Q -->|Yes| R["outplace_all_reduce(mscclpp)"]
+    Q -->|No| S{SymmMem 适用?}
+    S -->|Yes| T["outplace_all_reduce(symm)"]
+    S -->|No| U{PyNccl 可用?}
+    U -->|Yes| V["inplace_all_reduce(pynccl)"]
+    U -->|No| W["inplace_all_reduce(torch.dist)"]
+
+    style A fill:#1c2128,stroke:#39d0d8,color:#e6edf3
+    style N fill:#1c2128,stroke:#3fb950,color:#e6edf3
+    style V fill:#1c2128,stroke:#58a6ff,color:#e6edf3
+</div>
+
+<h3>7.1 Eager vs Graph 模式对比</h3>
+
+<table>
+<tr><th>AllReduce 方法</th><th>Eager 模式</th><th>CUDA Graph 模式</th></tr>
+<tr><td>Quick AllReduce (AMD)</td><td>启用</td><td>启用</td></tr>
+<tr><td>Custom AllReduce</td><td>启用</td><td>启用</td></tr>
+<tr><td>PyNccl</td><td>禁用</td><td>启用</td></tr>
+<tr><td>PyMscclpp</td><td>禁用</td><td>启用</td></tr>
+<tr><td>TorchSymmMem</td><td>禁用</td><td>启用</td></tr>
+<tr><td>torch.distributed</td><td>启用</td><td>禁用</td></tr>
+</table>
+
+<div class="highlight">
+<strong>设计原理：</strong>CUDA Graph 不兼容 <code>torch.distributed</code> 的隐式同步，因此在图模式下使用 PyNccl（直接操作 CUDA Stream）或 Custom AllReduce（IPC 共享内存）。而 PyMscclpp 在 eager 模式下需要预注册缓冲区导致开销过大，仅在图模式下使用。
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s8">8. CUDA Graph 集成</h2>
+
+<h3>8.1 graph_capture 上下文管理器</h3>
+
+<p><code>GroupCoordinator.graph_capture()</code> 负责设置 CUDA Graph 捕获期间的通信状态：</p>
+
+<pre><code>@contextmanager
+def graph_capture(self, graph_capture_context=None, stream=None):
+    # 1. 创建或使用指定的 CUDA Stream
+    # 2. 进入 CustomAllreduce 的 capture() 上下文
+    # 3. 启用 PyNccl（切换到当前流）
+    # 4. 启用 PyMscclpp
+    # 5. yield -- 在此期间捕获 CUDA Graph
+    # 6. 退出时恢复所有通信器状态
+    with maybe_ca_context, maybe_pynccl_context, maybe_pymscclpp_context:
+        yield graph_capture_context</code></pre>
+
+<h3>8.2 通信器状态切换</h3>
+
+<p>PyNccl 通信器通过 <code>change_state()</code> 上下文管理器在 eager/graph 模式间切换：</p>
+
+<pre><code>@contextmanager
+def change_state(self, enable=None, stream=None):
+    old_disable = self.disabled
+    old_stream = self.stream
+    self.stream = stream
+    self.disabled = not enable
+    yield
+    self.disabled = old_disable
+    self.stream = old_stream</code></pre>
+
+<h3>8.3 端到端 AllReduce 路径（CUDA Graph 模式）</h3>
+
+<div class="mermaid">
+sequenceDiagram
+    participant Model as 模型层
+    participant GC as GroupCoordinator
+    participant CA as CustomAllreduce
+    participant NC as PyNcclCommunicator
+    participant GPU as GPU Kernel
+
+    Note over GC: graph_capture() 上下文
+    Note over CA: capture() 上下文
+    Note over NC: change_state(enable=True)
+
+    Model->>GC: all_reduce(tensor)
+    GC->>GC: 检查 should_custom_ar()
+
+    alt 张量 < 8MB 且满足对齐
+        GC->>CA: custom_all_reduce(tensor)
+        CA->>GPU: all_reduce(registered=True)
+        GPU-->>Model: 输出张量
+    else 张量 >= 8MB
+        GC->>NC: all_reduce(tensor)
+        NC->>GPU: ncclAllReduce(...)
+        GPU-->>Model: 原地更新
+    end
+</div>
+
+</main>
+</div>
+<script>mermaid.initialize({theme:'dark',themeVariables:{primaryColor:'#1c2128',primaryTextColor:'#e6edf3',primaryBorderColor:'#30363d',lineColor:'#58a6ff',secondaryColor:'#161b22',tertiaryColor:'#0d1117'}})</script>
+</body>
+</html>

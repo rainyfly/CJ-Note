@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>vLLM KV Cache 管理：PagedAttention 与 APC 深度解析 — CJ-Note</title>
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="vLLM KV Cache 管理：PagedAttention 与 APC 深度解析">
+  <meta name="report-type"  content="repo">
+  <meta name="report-date"  content="2026-04-10">
+  <meta name="report-tags"  content="vllm, framework">
+  <meta name="report-desc"  content="KVCacheManager、BlockPool 实现、PagedAttention 分页机制、Automatic Prefix Caching (APC) 与 KV Cache Offloading 详解">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #0d1117; --surface: #161b22; --border: #30363d;
+      --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+      --green: #3fb950; --yellow: #d29922; --red: #f85149;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font-sans);
+           line-height: 1.7; padding: 0 1rem; }
+    .page-wrap { max-width: 900px; margin: 0 auto; padding: 2rem 0 4rem; }
+
+    /* Header */
+    .report-header { border-bottom: 1px solid var(--border); padding-bottom: 1.5rem; margin-bottom: 2rem; }
+    .report-header h1 { font-size: 1.9rem; color: var(--accent); margin-bottom: .5rem; }
+    .meta { color: var(--muted); font-size: .85rem; display: flex; gap: 1.5rem; flex-wrap: wrap; }
+    .meta span::before { content: "• "; }
+    .meta span:first-child::before { content: ""; }
+    .back-link { display: inline-block; margin-bottom: 1rem; color: var(--muted);
+                 text-decoration: none; font-size: .85rem; }
+    .back-link:hover { color: var(--accent); }
+
+    /* Sections */
+    h2 { font-size: 1.3rem; color: var(--text); margin: 2.5rem 0 .8rem;
+         padding-bottom: .4rem; border-bottom: 1px solid var(--border); }
+    h3 { font-size: 1.05rem; color: var(--accent); margin: 1.5rem 0 .5rem; }
+    h4 { font-size: .95rem; color: var(--muted); margin: 1rem 0 .3rem; text-transform: uppercase;
+         letter-spacing: .05em; }
+    p { margin-bottom: 1rem; color: var(--text); }
+
+    /* TL;DR box */
+    .tldr { background: var(--surface); border: 1px solid var(--accent);
+            border-left: 4px solid var(--accent); border-radius: 6px;
+            padding: 1rem 1.2rem; margin: 1.5rem 0; }
+    .tldr h3 { color: var(--accent); margin: 0 0 .5rem; font-size: .9rem;
+               text-transform: uppercase; letter-spacing: .1em; }
+    .tldr ul { padding-left: 1.2rem; }
+    .tldr li { margin-bottom: .3rem; }
+
+    /* Key-value info grid */
+    .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                 gap: .75rem; margin: 1rem 0 1.5rem; }
+    .info-card { background: var(--surface); border: 1px solid var(--border);
+                 border-radius: 6px; padding: .8rem 1rem; }
+    .info-card .label { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em;
+                        color: var(--muted); margin-bottom: .3rem; }
+    .info-card .value { font-size: 1.1rem; font-weight: 600; color: var(--accent);
+                        font-family: var(--font-mono); }
+
+    /* Code blocks */
+    pre { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+          padding: 1rem 1.2rem; overflow-x: auto; margin: 1rem 0; font-size: .85rem;
+          font-family: var(--font-mono); line-height: 1.5; }
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 3px;
+           padding: .15em .4em; font-size: .85em; font-family: var(--font-mono); }
+    pre code { background: none; border: none; padding: 0; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .9rem; }
+    th { background: var(--surface); color: var(--muted); font-weight: 600; text-align: left;
+         padding: .6rem .8rem; border: 1px solid var(--border); font-size: .8rem;
+         text-transform: uppercase; letter-spacing: .04em; }
+    td { padding: .6rem .8rem; border: 1px solid var(--border); vertical-align: top; }
+    tr:nth-child(even) td { background: rgba(255,255,255,.02); }
+
+    /* Mermaid diagrams */
+    .diagram-wrap { background: var(--surface); border: 1px solid var(--border);
+                    border-radius: 8px; padding: 1.5rem; margin: 1.2rem 0;
+                    overflow-x: auto; text-align: center; }
+    .diagram-wrap h4 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+                       letter-spacing: .05em; margin-bottom: 1rem; text-align: left; }
+
+    /* Callout boxes */
+    .callout { border-radius: 6px; padding: .8rem 1rem; margin: 1rem 0;
+               border-left: 4px solid; }
+    .callout.note { background: rgba(88,166,255,.07); border-color: var(--accent); }
+    .callout.tip  { background: rgba(63,185,80,.07);  border-color: var(--green); }
+    .callout.warn { background: rgba(210,153,34,.07); border-color: var(--yellow); }
+    .callout.key  { background: rgba(248,81,73,.07);  border-color: var(--red); }
+    .callout strong { display: block; margin-bottom: .3rem; font-size: .85rem;
+                      text-transform: uppercase; letter-spacing: .04em; }
+
+    /* Reference list */
+    .refs ol { padding-left: 1.5rem; }
+    .refs li { margin-bottom: .5rem; font-size: .9rem; color: var(--muted); }
+    .refs a { color: var(--accent); }
+
+    /* TOC */
+    .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+           padding: 1rem 1.2rem; margin: 0 0 2rem; font-size: .9rem; }
+    .toc h3 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+              letter-spacing: .1em; margin-bottom: .6rem; }
+    .toc ol { padding-left: 1.3rem; }
+    .toc li { margin-bottom: .25rem; }
+    .toc a { color: var(--muted); text-decoration: none; }
+    .toc a:hover { color: var(--accent); }
+
+    /* Footer */
+    .report-footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border);
+                     color: var(--muted); font-size: .8rem; display: flex; justify-content: space-between; }
+  </style>
+</head>
+<body>
+<div class="page-wrap">
+
+  <a href="../index.html" class="back-link">← Back to CJ-Note</a>
+
+  <header class="report-header">
+    <h1>vLLM KV Cache 管理：PagedAttention 与 APC 深度解析</h1>
+    <div class="meta">
+      <span>TYPE: REPO ANALYSIS</span>
+      <span>DATE: 2026-04-10</span>
+      <span>基于 vLLM v1 架构</span>
+    </div>
+  </header>
+
+  <!-- TL;DR -->
+  <div class="tldr">
+    <h3>TL;DR</h3>
+    <ul>
+      <li>vLLM 以 Block（默认 16 tokens）为单位动态分配 KV Cache，彻底消除传统静态预分配的显存浪费，理论内存利用率接近 100%。</li>
+      <li>PagedAttention 类比操作系统虚拟内存：逻辑 KV 槽位通过 block_table 映射到非连续物理块，CUDA 内核通过 slot_mapping 完成间接寻址。</li>
+      <li>Automatic Prefix Caching (APC) 使用链式哈希索引已满块，前缀相同的请求（如共享 System Prompt 的 RAG 场景）可复用 KV Cache，TTFT 最多降低 90%+。</li>
+      <li>BlockPool 维护 LRU 双向链表：普通空闲块插队首（优先驱逐），APC 缓存块插队尾（LRU 延迟驱逐），确保热点 prefix 尽量留在 GPU。</li>
+      <li>当 GPU 块不足时，支持 KV Cache Offloading 到 CPU Pinned Memory，以及 P/D 分离场景下通过 KVConnector（NCCL/RDMA）跨节点传输 KV。</li>
+    </ul>
+  </div>
+
+  <!-- Table of Contents -->
+  <nav class="toc">
+    <h3>Contents</h3>
+    <ol>
+      <li><a href="#overview">KV Cache 管理概述</a></li>
+      <li><a href="#paged-attention">PagedAttention 原理</a></li>
+      <li><a href="#data-structures">核心数据结构</a></li>
+      <li><a href="#kvcache-manager">KVCacheManager</a></li>
+      <li><a href="#block-pool">BlockPool（物理块池）</a></li>
+      <li><a href="#apc">Automatic Prefix Caching (APC)</a></li>
+      <li><a href="#memory-planning">GPU 显存规划流程</a></li>
+      <li><a href="#physical-layout">KV Cache 物理布局</a></li>
+      <li><a href="#offloading">KV Cache Offloading</a></li>
+      <li><a href="#quantization">KV Cache 量化</a></li>
+      <li><a href="#preemption">抢占与驱逐策略</a></li>
+      <li><a href="#pd-transfer">P/D 分离下的 KV Transfer</a></li>
+      <li><a href="#flow-diagrams">关键流程图与时序图</a></li>
+    </ol>
+  </nav>
+
+  <!-- ── 1. Overview ──────────────────────────── -->
+  <section id="overview">
+    <h2>1. KV Cache 管理概述</h2>
+    <p>KV Cache 管理是 vLLM 最核心的创新。传统框架为每个请求<strong>预先分配</strong>最大序列长度的连续显存，导致严重浪费：</p>
+
+    <pre><code>传统方案（静态预分配）:
+  请求 A: 实际 200 tokens，预分配 2048 个 KV 槽位 → 90% 浪费
+  请求 B: 同样浪费
+  结果: GPU 内存利用率极低，并发数受限
+
+vLLM PagedAttention:
+  以 Block（默认 16 tokens）为单位动态分配
+  按需分配，按需释放，内存利用率接近 100%</code></pre>
+
+    <p>vLLM v1 的 KV Cache 管理整体架构如下：</p>
+
+    <div class="diagram-wrap">
+      <h4>KV Cache 管理架构总览</h4>
+      <div class="mermaid">
+graph TD
+    KVM["KVCacheManager"]
+    KCC["KVCacheCoordinator<br/>协调多种 KV Cache 类型<br/>Attention / MambaSSM / ..."]
+    STKVM["SingleTypeKVCacheManager<br/>(per type)"]
+    BP["BlockPool<br/>free_block_queue (LRU deque)<br/>cached_blocks (hash → KVCacheBlock)<br/>num_gpu_blocks"]
+    BT["per-request BlockTable<br/>req_id → list[block_id]"]
+    ECM["EncoderCacheManager<br/>Encoder-Decoder 模型的独立缓存"]
+
+    KVM --> KCC
+    KCC --> STKVM
+    STKVM --> BP
+    STKVM --> BT
+    KVM --> ECM
+
+    style KVM fill:#1f6feb,stroke:#58a6ff,color:#e6edf3
+    style KCC fill:#21262d,stroke:#30363d,color:#e6edf3
+    style STKVM fill:#21262d,stroke:#30363d,color:#e6edf3
+    style BP fill:#0d419d,stroke:#58a6ff,color:#e6edf3
+    style BT fill:#21262d,stroke:#30363d,color:#e6edf3
+    style ECM fill:#21262d,stroke:#30363d,color:#8b949e
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 2. PagedAttention ──────────────────────────── -->
+  <section id="paged-attention">
+    <h2>2. PagedAttention 原理</h2>
+
+    <h3>2.1 分页存储</h3>
+    <p>类比操作系统的虚拟内存：</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>操作系统虚拟内存</th>
+          <th>vLLM PagedAttention</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>进程</td><td>请求（KV 序列）</td></tr>
+        <tr><td>虚拟地址页（逻辑块）</td><td>token 位置（逻辑 KV 槽位）</td></tr>
+        <tr><td>物理内存帧（物理块）</td><td>GPU 显存块（物理 KV 块）</td></tr>
+        <tr><td>页表</td><td>block_table（逻辑→物理映射）</td></tr>
+      </tbody>
+    </table>
+
+    <h3>2.2 非连续物理存储</h3>
+    <p>物理块在 GPU 显存中不要求连续，Attention 内核通过 <code>block_table</code> 间接寻址。前缀相同的请求可共享同一物理块（Prefix Caching）：</p>
+
+    <div class="diagram-wrap">
+      <h4>非连续物理存储与块共享示意</h4>
+      <div class="mermaid">
+graph LR
+    subgraph 请求A["请求 A 逻辑视图"]
+      A0["Token 0-15"]
+      A1["Token 16-31"]
+      A2["Token 32-47"]
+    end
+    subgraph 请求B["请求 B 逻辑视图"]
+      B0["Token 0-15"]
+      B1["Token 16-31"]
+      B2["Token 32-47"]
+    end
+    subgraph GPU["GPU 显存物理块"]
+      P7["块 #7<br/>ref_count=2"]
+      P23["块 #23<br/>ref_count=2"]
+      P5["块 #5 (A私有)"]
+      P12["块 #12 (B私有)"]
+    end
+
+    A0 -->|"映射"| P7
+    A1 -->|"映射"| P23
+    A2 -->|"映射"| P5
+    B0 -->|"共享"| P7
+    B1 -->|"共享"| P23
+    B2 -->|"映射"| P12
+
+    style P7 fill:#0d419d,stroke:#58a6ff,color:#e6edf3
+    style P23 fill:#0d419d,stroke:#58a6ff,color:#e6edf3
+    style P5 fill:#21262d,stroke:#30363d,color:#e6edf3
+    style P12 fill:#21262d,stroke:#30363d,color:#e6edf3
+      </div>
+    </div>
+
+    <h3>2.3 Block Table 与 Slot Mapping</h3>
+    <pre><code># block_table[req_idx, block_slot] = physical_block_id
+# 形状: [num_reqs, max_blocks_per_req]
+block_table = tensor([
+    [7, 23, 5, -1, -1, ...],  # 请求 A
+    [7, 23, 12, -1, -1, ...], # 请求 B（共享前2块）
+])
+
+# slot_mapping[token_idx] = physical_slot_id
+# physical_slot_id = block_id × block_size + position_in_block
+slot_mapping = tensor([
+    # 请求 A
+    7*16+0, 7*16+1, ..., 7*16+15,   # token 0-15 → 块7
+    23*16+0, ..., 23*16+15,          # token 16-31 → 块23
+    5*16+0, ..., 5*16+15,            # token 32-47 → 块5
+    # 请求 B
+    7*16+0, ...,                     # token 0-15 → 块7（共享）
+    ...
+])</code></pre>
+  </section>
+
+  <!-- ── 3. Data Structures ──────────────────────────── -->
+  <section id="data-structures">
+    <h2>3. 核心数据结构</h2>
+
+    <h3>3.1 KVCacheBlock</h3>
+    <pre><code>class KVCacheBlock:
+    """代表一个物理 KV Cache 块"""
+    block_id: int              # 物理块编号（GPU 显存索引）
+    ref_count: int             # 引用计数（共享时 > 1）
+    block_hash: BlockHash | None  # 内容哈希（仅当块已满时）
+    num_hashed_tokens: int     # 参与哈希的 token 数
+
+    # 在 free_block_queue（LRU deque）中的节点引用
+    # ref_count=0 时加入此队列
+    _prev_free_block: KVCacheBlock | None
+    _next_free_block: KVCacheBlock | None</code></pre>
+
+    <h3>3.2 BlockHash</h3>
+    <pre><code>class BlockHash(NamedTuple):
+    """用于 APC 的块哈希"""
+    hash_value: int        # 数字哈希值（xxHash/SHA256）
+    token_ids: tuple[int]  # 块内 token ID（用于哈希碰撞验证）
+
+    # 哈希输入：
+    # - 父块的 hash_value（链式哈希）
+    # - 本块的 token_ids
+    # - 多模态内容哈希（如有图像/音频）
+    # - extra_hash（如 LoRA adapter id）</code></pre>
+
+    <h3>3.3 BlockPool</h3>
+    <pre><code>class BlockPool:
+    """管理所有物理块的池"""
+
+    # 物理块数组（固定大小）
+    blocks: list[KVCacheBlock]     # index = block_id
+
+    # 空闲块 LRU 队列
+    # 队首 = 最久未用（优先驱逐）
+    # 队尾 = 最近释放（优先复用）
+    free_block_queue: BlockFreeQueue
+
+    # APC 索引：hash → KVCacheBlock
+    # 注意：cached_blocks 中的块 ref_count 可能 = 0（可被驱逐但尚未驱逐）
+    cached_blocks: dict[BlockHash, KVCacheBlock]
+
+    # 统计
+    num_gpu_blocks: int
+    num_free_blocks: int           # = len(free_block_queue) + 引用为0的缓存块</code></pre>
+  </section>
+
+  <!-- ── 4. KVCacheManager ──────────────────────────── -->
+  <section id="kvcache-manager">
+    <h2>4. KVCacheManager</h2>
+
+    <p><strong>文件</strong>：<code>vllm/v1/core/kv_cache_manager.py</code></p>
+
+    <h3>4.1 核心接口</h3>
+    <pre><code>class KVCacheManager:
+
+    def get_computed_blocks(
+        self, request: Request
+    ) -> tuple[list[KVCacheBlock], int]:
+        """
+        查找请求 prompt 的 APC 命中块。
+        返回: (命中的 KVCacheBlock 列表, 已计算的 token 数)
+        """
+
+    def allocate_slots(
+        self,
+        request: Request,
+        num_tokens: int,
+        computed_blocks: list[KVCacheBlock] | None = None,
+    ) -> KVCacheBlocks | None:
+        """
+        为请求分配 KV 块。
+        返回: KVCacheBlocks（含 block_id 列表），None 表示分配失败
+        """
+
+    def free(self, request: Request) -> None:
+        """释放请求的所有 KV 块"""
+
+    def free_block(self, block: KVCacheBlock) -> None:
+        """释放单个块（引用计数 -1，归零则加入 free_block_queue）"""</code></pre>
+
+    <h3>4.2 allocate_slots() 详细流程</h3>
+
+    <div class="diagram-wrap">
+      <h4>allocate_slots() 执行流程</h4>
+      <div class="mermaid">
+flowchart TD
+    Start(["allocate_slots(request, num_tokens, computed_blocks)"])
+    CalcNew["1. 计算需要多少新块\nnum_required_new_blocks = ceil(\n  (num_computed_tokens + num_tokens) / block_size\n) - len(computed_blocks)"]
+    CheckFree{"2. 是否有足够空闲块?"}
+    ReturnNone["return None\n→ 触发抢占"]
+    AllocNew["3. 分配新块\nfor i in range(num_required_new_blocks):\n  block = free_block_queue.popleft()\n  驱逐 APC 缓存（如有 hash）\n  block.ref_count = 1"]
+    UpdateBT["4. 更新 block_table\nrequest.block_ids = computed_blocks + new_blocks"]
+    IncRef["5. computed_blocks 增加引用计数\nref_count++\n如在 LRU 队列中则移除"]
+    Done(["返回 KVCacheBlocks"])
+
+    Start --> CalcNew
+    CalcNew --> CheckFree
+    CheckFree -->|"否"| ReturnNone
+    CheckFree -->|"是"| AllocNew
+    AllocNew --> UpdateBT
+    UpdateBT --> IncRef
+    IncRef --> Done
+
+    style ReturnNone fill:#490202,stroke:#f85149,color:#e6edf3
+    style Done fill:#0d419d,stroke:#58a6ff,color:#e6edf3
+      </div>
+    </div>
+
+    <h3>4.3 free() 释放流程</h3>
+    <pre><code>free(request)
+       │
+       ├── 获取 request 的所有 KV 块
+       │
+       for block in request.blocks:
+       │
+       ├── block.ref_count -= 1
+       │
+       └── if block.ref_count == 0:
+               # 块不再被任何请求使用
+               if block.block_hash is not None:
+                   # APC 块：加入 LRU 尾部（不立即删除 cached_blocks 中的条目）
+                   # 等到其他请求需要块时才真正驱逐
+                   free_block_queue.append(block)
+               else:
+                   # 普通块（最后一块，通常未满）：
+                   # 直接加入 LRU 头部（优先被复用/驱逐）
+                   free_block_queue.appendleft(block)</code></pre>
+  </section>
+
+  <!-- ── 5. BlockPool ──────────────────────────── -->
+  <section id="block-pool">
+    <h2>5. BlockPool（物理块池）</h2>
+
+    <p><strong>文件</strong>：<code>vllm/v1/core/block_pool.py</code></p>
+
+    <h3>5.1 LRU 驱逐队列</h3>
+    <p>BlockPool 使用<strong>双向链表（deque）</strong>实现 LRU 队列：队首放最久未用的块（优先驱逐），队尾放最近释放的块（优先复用）。</p>
+
+    <pre><code>free_block_queue（队首 = 最久未用，队尾 = 最近释放）:
+
+  ┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐
+  │Block │←→│Block │←→│Block │←→│Block │←→│Block │
+  │  #3  │  │  #17 │  │  #9  │  │  #42 │  │  #8  │
+  │hash=A│  │hash=B│  │hash=C│  │hash=D│  │hash=E│
+  └──────┘  └──────┘  └──────┘  └──────┘  └──────┘
+  队首（oldest）                           队尾（newest）
+  ↑ 分配新块时从这里取，如有 cached_hash 则驱逐 APC 条目
+                                          ↑ 释放块时加到这里</code></pre>
+
+    <h3>5.2 块的生命周期</h3>
+
+    <div class="diagram-wrap">
+      <h4>KVCacheBlock 状态机</h4>
+      <div class="mermaid">
+stateDiagram-v2
+    [*] --> FREE : 初始化
+
+    FREE : FREE 状态\nref_count=0\n在LRU队列\n无 APC hash
+
+    IN_USE : IN_USE 状态\nref_count ≥ 1\n不在LRU队列\n有/无 hash
+
+    CACHED : CACHED 状态\nref_count=0\n在LRU队列\n有 APC hash
+
+    FREE --> IN_USE : allocate_slots()\nref_count = 1
+    IN_USE --> FREE : free()\nref_count→0, 无hash\n插入队首
+    IN_USE --> CACHED : free()\nref_count→0, 有hash\n插入队尾
+    CACHED --> IN_USE : APC命中\nref_count++\n从LRU移除
+    CACHED --> FREE : 被驱逐\npopleft() 取出\n清除 cached_blocks
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 6. APC ──────────────────────────── -->
+  <section id="apc">
+    <h2>6. Automatic Prefix Caching (APC)</h2>
+
+    <h3>6.1 工作原理</h3>
+    <p>APC 使得前缀相同的请求可以共享 KV Cache。以 RAG 场景为例（多请求共享相同 System Prompt）：</p>
+
+    <pre><code>T1: 请求 A 处理
+  Prompt: "System: You are helpful.\nUser: Hello, what is AI?"
+  Block 0 (tokens 0-15): "System: You are helpful.\n"
+    → 块满，计算哈希: hash_0 = H(seed, token_ids[0:16])
+    → cached_blocks[hash_0] = block #7
+
+  Block 1 (tokens 16-31): "User: Hello, what"
+    → 块满，计算哈希: hash_1 = H(hash_0, token_ids[16:32])
+    → cached_blocks[hash_1] = block #23
+
+T2: 请求 B 处理（相同系统提示）
+  Prompt: "System: You are helpful.\nUser: What is machine learning?"
+
+  get_computed_blocks(request_B):
+    检查 hash_0 → 命中! block #7 (ref_count 0→1, 从LRU移除)
+    检查 hash_1 → 未命中（"User: What is" ≠ "User: Hello, what"）
+
+  → num_computed_tokens = 16（前16个 token 不需要重新计算）
+  → 只需分配第2块开始的新块</code></pre>
+
+    <h3>6.2 哈希链（Chain Hash）</h3>
+    <p>链式哈希确保前缀唯一性：每个块的哈希依赖父块哈希，形成不可伪造的前缀依赖关系。</p>
+
+    <div class="diagram-wrap">
+      <h4>链式哈希结构</h4>
+      <div class="mermaid">
+graph LR
+    seed["seed\n(固定初始值)"]
+    h0["hash_0\n= xxhash(seed + token_ids[0:16])"]
+    h1["hash_1\n= xxhash(hash_0 + token_ids[16:32])"]
+    h2["hash_k\n= xxhash(hash_k-1 + token_ids[k×16:(k+1)×16])"]
+    mm["多模态块\n= xxhash(hash_prev + token_ids + mm_hash)"]
+
+    seed --> h0
+    h0 --> h1
+    h1 --> h2
+    h2 -->|"..."| mm
+
+    style h0 fill:#0d419d,stroke:#58a6ff,color:#e6edf3
+    style h1 fill:#0d419d,stroke:#58a6ff,color:#e6edf3
+    style h2 fill:#0d419d,stroke:#58a6ff,color:#e6edf3
+    style mm fill:#1b3a2a,stroke:#3fb950,color:#e6edf3
+      </div>
+    </div>
+
+    <h3>6.3 APC 命中率统计</h3>
+    <pre><code># 每次 schedule() 后统计
+num_computed_tokens  # 通过 APC 跳过的 token 数
+num_scheduled_tokens # 本步实际计算的 token 数
+
+cache_hit_rate = num_computed_tokens / (num_computed_tokens + num_scheduled_tokens)</code></pre>
+
+    <h3>6.4 APC 查找流程</h3>
+
+    <div class="diagram-wrap">
+      <h4>get_computed_blocks() 执行流程</h4>
+      <div class="mermaid">
+flowchart TD
+    Start(["新请求进入 get_computed_blocks()"])
+    Loop["遍历 prompt blocks（从块 0 开始）"]
+    CalcHash["计算该块的 block_hash"]
+    Lookup{"查找 cached_blocks[block_hash]"}
+    HitVerify["验证 token_ids 匹配\n（防哈希碰撞）"]
+    AddComputed["加入 computed_blocks\n继续检查下一块"]
+    MissStop["停止\n（前缀中断，后续块无法命中）"]
+    Return(["返回 (computed_blocks, num_computed_tokens)\nnum_computed_tokens = len(computed_blocks) × block_size"])
+
+    Start --> Loop
+    Loop --> CalcHash
+    CalcHash --> Lookup
+    Lookup -->|"命中"| HitVerify
+    HitVerify --> AddComputed
+    AddComputed --> Loop
+    Lookup -->|"未命中"| MissStop
+    MissStop --> Return
+    Loop -->|"全部遍历完"| Return
+
+    style MissStop fill:#2d1a00,stroke:#d29922,color:#e6edf3
+    style Return fill:#0d419d,stroke:#58a6ff,color:#e6edf3
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 7. GPU Memory Planning ──────────────────────────── -->
+  <section id="memory-planning">
+    <h2>7. GPU 显存规划流程</h2>
+
+    <div class="diagram-wrap">
+      <h4>Worker 初始化阶段显存规划步骤</h4>
+      <div class="mermaid">
+flowchart TD
+    S1["Step 1: 加载模型权重\nmodel_memory = 参数量 × dtype_size\n(7B × 2B/param = 14 GB for BF16)"]
+    S2["Step 2: DeviceMemoryProfiler\n构造最大 dummy batch 运行 forward()\npeak_memory = torch.cuda.max_memory_allocated()\n(包括激活值、中间张量、CUDA 工作区)"]
+    S3["Step 3: 计算 KV Cache 可用显存\ntotal_memory × gpu_memory_utilization - peak_memory\n(默认 gpu_memory_utilization=0.9)"]
+    S4["Step 4: 计算块数\nblock_memory = block_size × num_kv_heads × head_size × 2 × dtype_size × num_layers\nnum_gpu_blocks = floor(available_kv / block_memory)"]
+    S5["Step 5: 预分配 KV Cache 张量\ntorch.zeros(\n  num_layers, 2, num_gpu_blocks, block_size, num_kv_heads, head_size\n)"]
+
+    S1 --> S2 --> S3 --> S4 --> S5
+
+    style S5 fill:#0d419d,stroke:#58a6ff,color:#e6edf3
+      </div>
+    </div>
+
+    <h3>7.1 显存分配示例</h3>
+    <div class="callout note">
+      <strong>示例：A100 80GB, Llama-3-8B, BF16, block_size=16</strong>
+      <p>模型权重: ~16 GB &nbsp;|&nbsp; 激活/工作区: ~5 GB (估算)<br>
+      可用 KV: 80×0.9 - 16 - 5 = <strong>51 GB</strong></p>
+      <p>per-block KV: 16 × 8 × 128 × 2 × 2 × 32 = 2,097,152 bytes = <strong>2 MB</strong></p>
+      <p>num_gpu_blocks = 51×1024 / 2 = <strong>26,112 块</strong><br>
+      max_tokens = 26,112 × 16 = <strong>417,792 tokens</strong>（理论最大并发上下文）</p>
+    </div>
+  </section>
+
+  <!-- ── 8. Physical Layout ──────────────────────────── -->
+  <section id="physical-layout">
+    <h2>8. KV Cache 物理布局</h2>
+
+    <h3>8.1 FlashAttention 后端布局</h3>
+    <pre><code>kv_cache Tensor:
+  shape = [num_layers, 2, num_blocks, block_size, num_kv_heads, head_size]
+                       ↑ 0=Key, 1=Value
+
+访问示例：
+  layer 3, Key, block #7, position 5, head 2, dim 64:
+  kv_cache[3, 0, 7, 5, 2, 64]
+
+写入新 token（在 execute_model 时通过 slot_mapping）:
+  slot_id = block_id × block_size + position_in_block
+  # CUDA 内核: cache_ops.reshape_and_cache(key, value, key_cache, value_cache, slot_mapping)</code></pre>
+
+    <h3>8.2 FlashInfer 后端布局</h3>
+    <pre><code>kv_cache Tensor:
+  shape = [num_blocks, 2, block_size, num_kv_heads, head_size]
+  (与 FlashAttention 的差异：num_layers 维度在外层分开存储)</code></pre>
+
+    <h3>8.3 MLA（DeepSeek）布局</h3>
+    <p>MLA（Multi-head Latent Attention）将 KV 压缩为低秩表示，相比标准 MHA 节省约 4× 显存：</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>布局</th>
+          <th>Tensor Shape</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>标准 MHA KV Cache</td>
+          <td><code>[num_layers, 2, num_blocks, block_size, num_kv_heads, head_size]</code></td>
+          <td>基准</td>
+        </tr>
+        <tr>
+          <td>MLA c_kv（压缩 KV）</td>
+          <td><code>[num_layers, num_blocks, block_size, kv_lora_rank]</code></td>
+          <td>kv_lora_rank=512</td>
+        </tr>
+        <tr>
+          <td>MLA k_pe（RoPE key）</td>
+          <td><code>[num_layers, num_blocks, block_size, qk_rope_head_dim]</code></td>
+          <td>额外位置信息</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout tip">
+      <strong>MLA 显存节省</strong>
+      kv_lora_rank (512) &lt;&lt; num_kv_heads × head_size (2048)，约 4× KV Cache 压缩比，DeepSeek 系列模型因此能在相同 GPU 上支持更长上下文。
+    </div>
+  </section>
+
+  <!-- ── 9. Offloading ──────────────────────────── -->
+  <section id="offloading">
+    <h2>9. KV Cache Offloading</h2>
+
+    <p><strong>文件</strong>：<code>vllm/v1/kv_offload/</code></p>
+
+    <h3>9.1 功能</h3>
+    <p>当 GPU 显存不足时，将低优先级请求的 KV Cache 卸载到 CPU 内存（或 NVMe），避免强制抢占。</p>
+
+    <div class="diagram-wrap">
+      <h4>KV Cache Offloading 架构</h4>
+      <div class="mermaid">
+graph TD
+    GPU["GPU 显存"]
+    AKV["Active KV Cache\n（当前执行的请求）"]
+    GPUBUF["GPU 传输缓冲区\n（Pinned Memory）"]
+    CPU["CPU 内存（Swap Space）"]
+    EVICTED["Evicted KV Cache\n（被卸载的请求）"]
+
+    GPU --> AKV
+    GPU --> GPUBUF
+    GPUBUF -->|"cudaMemcpyDeviceToHost（异步）"| CPU
+    CPU --> EVICTED
+    EVICTED -->|"cudaMemcpyHostToDevice（恢复时）"| GPUBUF
+
+    style AKV fill:#0d419d,stroke:#58a6ff,color:#e6edf3
+    style EVICTED fill:#2d1a00,stroke:#d29922,color:#e6edf3
+      </div>
+    </div>
+
+    <h3>9.2 卸载触发条件</h3>
+    <pre><code># KVOffloadScheduler 在 GPU 块不足时决策：
+if num_free_blocks &lt; threshold:
+    # 选择最近最少使用的请求
+    request_to_offload = get_lru_running_request()
+    # 将其 KV 块异步拷贝到 CPU
+    kv_offload_worker.offload(request_to_offload.block_ids)
+    # 请求标记为 OFFLOADED 状态（不从 RUNNING 移除）</code></pre>
+  </section>
+
+  <!-- ── 10. Quantization ──────────────────────────── -->
+  <section id="quantization">
+    <h2>10. KV Cache 量化</h2>
+
+    <h3>10.1 支持的量化格式</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>格式</th>
+          <th>精度损失</th>
+          <th>显存节省</th>
+          <th>应用场景</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>auto</code> (BF16/FP16)</td>
+          <td>无</td>
+          <td>基准</td>
+          <td>默认</td>
+        </tr>
+        <tr>
+          <td><code>fp8_e5m2</code></td>
+          <td>极小</td>
+          <td>50%</td>
+          <td>Hopper+</td>
+        </tr>
+        <tr>
+          <td><code>fp8_e4m3</code></td>
+          <td>极小</td>
+          <td>50%</td>
+          <td>Hopper+</td>
+        </tr>
+        <tr>
+          <td><code>int8</code></td>
+          <td>小</td>
+          <td>50%</td>
+          <td>通用</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>10.2 FP8 KV Cache 实现</h3>
+    <pre><code># 在写入 KV Cache 时量化（CUDA 内核）
+# csrc/attention/attention_kernels.cu:
+# cache_ops.reshape_and_cache_flash(
+#     key, value,               # FP16/BF16 输入
+#     key_cache, value_cache,   # FP8 存储
+#     slot_mapping,
+#     kv_cache_dtype="fp8",
+#     k_scale, v_scale          # 量化缩放因子
+# )
+
+# 在读取 KV Cache 时反量化
+# FlashAttention/FlashInfer 内核内部处理</code></pre>
+
+    <h3>10.3 配置方式</h3>
+    <pre><code>LLM(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    kv_cache_dtype="fp8",        # 或 "fp8_e5m2"、"auto"
+    # FP8 scale 文件（可选，用于精确量化）
+    quantization_param_path="./kv_cache_scales.json"
+)</code></pre>
+  </section>
+
+  <!-- ── 11. Preemption ──────────────────────────── -->
+  <section id="preemption">
+    <h2>11. 抢占与驱逐策略</h2>
+
+    <h3>11.1 抢占流程</h3>
+    <p>触发条件：<code>allocate_slots()</code> 返回 <code>None</code>（没有足够空闲块）。</p>
+
+    <div class="diagram-wrap">
+      <h4>RECOMPUTE 抢占策略</h4>
+      <div class="mermaid">
+flowchart TD
+    Trigger(["allocate_slots() 返回 None"])
+    Select["1. 选择被抢占请求\nFCFS 策略: 选最晚到达的 RUNNING 请求\nPriority 策略: 选最低优先级的请求"]
+    Free["2. 释放 KV 块\nfor block in request.blocks:\n    free_block(block)  # ref_count--"]
+    Reset["3. 更新请求状态\nrequest.status = WAITING\nrequest.num_computed_tokens = 0\n注意：APC 块若未驱逐，重调度时仍可命中"]
+    Requeue["4. 将请求放回 WAITING 队列头部\n（下轮调度时优先考虑）"]
+
+    Trigger --> Select --> Free --> Reset --> Requeue
+
+    style Trigger fill:#490202,stroke:#f85149,color:#e6edf3
+    style Requeue fill:#21262d,stroke:#30363d,color:#e6edf3
+      </div>
+    </div>
+
+    <h3>11.2 块驱逐顺序（LRU）</h3>
+    <pre><code>free_block_queue 队首（最先被分配/驱逐）的块：
+  1. ref_count=0 的普通块（最后一块，通常未满，无 APC 价值）
+  2. 最久未被命中的 APC 块（LRU 顺序）
+
+驱逐时:
+  block = free_block_queue.popleft()
+  if block.block_hash:
+      del cached_blocks[block.block_hash]  # 清除 APC 索引
+  # 块被重新分配给新请求</code></pre>
+
+    <div class="callout tip">
+      <strong>APC 与抢占的交互</strong>
+      被抢占的请求释放块后，若这些块有 APC hash 且尚未被驱逐，则重新调度时仍能命中 APC 缓存，无需完整重新计算 prompt。这是 vLLM RECOMPUTE 策略相比 SWAP 策略的一个有趣优化点。
+    </div>
+  </section>
+
+  <!-- ── 12. P/D Transfer ──────────────────────────── -->
+  <section id="pd-transfer">
+    <h2>12. P/D 分离下的 KV Transfer</h2>
+
+    <p><strong>文件</strong>：<code>vllm/distributed/kv_transfer/</code></p>
+
+    <h3>12.1 P/D 分离架构</h3>
+
+    <div class="diagram-wrap">
+      <h4>Prefill/Decode 分离架构</h4>
+      <div class="mermaid">
+graph LR
+    Client["Client 请求"]
+    PNode["Prefill 节点\n专门处理 prompt Prefill 阶段"]
+    KVTransfer["KV Cache 传输\n(NCCL / RDMA / TCP)"]
+    DNode["Decode 节点\n专门处理 token 生成阶段"]
+    Response["生成 Token 流"]
+
+    Client --> PNode
+    PNode -->|"生成 KV Cache"| KVTransfer
+    KVTransfer -->|"接收 KV Cache"| DNode
+    DNode --> Response
+
+    style PNode fill:#0d419d,stroke:#58a6ff,color:#e6edf3
+    style DNode fill:#1b3a2a,stroke:#3fb950,color:#e6edf3
+    style KVTransfer fill:#21262d,stroke:#30363d,color:#8b949e
+      </div>
+    </div>
+
+    <h3>12.2 KVConnector 接口</h3>
+    <pre><code>class KVConnectorBase(ABC):
+    """KV Cache 传输的抽象接口"""
+
+    @abstractmethod
+    def send_kv_caches(
+        self,
+        kv_caches: list[torch.Tensor],
+        block_ids: list[int],
+        target_rank: int,
+    ) -> None: ...
+
+    @abstractmethod
+    def recv_kv_caches(
+        self,
+        kv_caches: list[torch.Tensor],
+        block_ids: list[int],
+        source_rank: int,
+    ) -> None: ...</code></pre>
+
+    <h3>12.3 支持的传输后端</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>后端</th>
+          <th>传输协议</th>
+          <th>适用场景</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>PyNcclConnector</code></td>
+          <td>NCCL（NVLink/IB）</td>
+          <td>同机架 GPU 间</td>
+        </tr>
+        <tr>
+          <td><code>MooncakeConnector</code></td>
+          <td>RDMA</td>
+          <td>跨节点</td>
+        </tr>
+        <tr>
+          <td><code>LMCacheConnector</code></td>
+          <td>TCP/IP</td>
+          <td>通用网络</td>
+        </tr>
+        <tr>
+          <td><code>NixlConnector</code></td>
+          <td>NIXL</td>
+          <td>高性能 RDMA</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ── 13. Flow Diagrams ──────────────────────────── -->
+  <section id="flow-diagrams">
+    <h2>13. 关键流程图与时序图</h2>
+
+    <h3>13.1 完整 KV 分配时序图</h3>
+
+    <div class="diagram-wrap">
+      <h4>Scheduler / KVCacheManager / BlockPool 交互时序</h4>
+      <div class="mermaid">
+sequenceDiagram
+    participant Sched as Scheduler
+    participant KVM as KVCacheManager
+    participant BP as BlockPool
+
+    Sched->>KVM: get_computed_blocks(request)
+    loop 遍历每个 prompt block
+        KVM->>BP: 查找 cached_blocks[hash]
+        BP-->>KVM: hit / miss
+    end
+    KVM-->>Sched: computed_blocks
+
+    Sched->>KVM: allocate_slots(req, num_tokens, computed_blocks)
+    KVM->>BP: 检查 num_free_blocks
+    BP-->>KVM: num_free_blocks
+
+    alt 空闲块足够
+        loop 分配每个新块
+            KVM->>BP: popleft() 取 LRU 块
+            BP-->>KVM: block
+            Note over KVM: 驱逐 APC（如有 hash）<br/>ref_count = 1
+        end
+        loop computed_blocks
+            KVM->>BP: ref_count++，从 LRU 移除
+        end
+        KVM-->>Sched: KVCacheBlocks
+    else 空闲块不足
+        KVM-->>Sched: None（触发抢占）
+    end
+
+    Note over Sched,BP: ... 模型执行 ...
+
+    Sched->>KVM: free(request)
+    loop 每个 block
+        KVM->>BP: ref_count--\n if 0: has_hash→append, no_hash→prepend
+    end
+      </div>
+    </div>
+
+    <h3>13.2 APC 命中对调度性能的影响</h3>
+
+    <div class="callout note">
+      <strong>场景：多请求共享 System Prompt（RAG 场景）</strong>
+      <p><strong>请求 1（无 APC）：</strong>System Prompt 1024 tokens + User 100 tokens<br>
+      Prefill 计算量：1124 tokens（全部），KV 分配：71 块</p>
+      <p><strong>请求 2（APC 命中 System Prompt）：</strong>System Prompt 1024 tokens + User 80 tokens<br>
+      APC 命中 64 块（1024 tokens），Prefill 只需计算 80 tokens，仅需 5 新块（+64 共享块 ref_count++）</p>
+      <p><strong>效果：</strong>计算量减少 93%（80 vs 1124 tokens）| 共享块被 N 个请求共用 | TTFT 大幅降低</p>
+    </div>
+  </section>
+
+  <!-- ── References ──────────────────────────── -->
+  <section id="refs" class="refs">
+    <h2>参考资料</h2>
+    <ol>
+      <li><a href="https://github.com/vllm-project/vllm/blob/main/vllm/v1/core/kv_cache_manager.py" target="_blank">vllm/v1/core/kv_cache_manager.py — KVCacheManager 实现</a></li>
+      <li><a href="https://github.com/vllm-project/vllm/blob/main/vllm/v1/core/block_pool.py" target="_blank">vllm/v1/core/block_pool.py — BlockPool 实现</a></li>
+      <li><a href="https://github.com/vllm-project/vllm/tree/main/vllm/v1/kv_offload/" target="_blank">vllm/v1/kv_offload/ — KV Cache Offloading 模块</a></li>
+      <li><a href="https://github.com/vllm-project/vllm/tree/main/vllm/distributed/kv_transfer/" target="_blank">vllm/distributed/kv_transfer/ — P/D 分离 KV 传输</a></li>
+      <li><a href="https://arxiv.org/abs/2309.06180" target="_blank">vLLM: Efficient Memory Management for Large Language Model Serving with PagedAttention (Kwon et al., 2023)</a></li>
+    </ol>
+  </section>
+
+  <footer class="report-footer">
+    <span>CJ-Note · LLM Inference Research</span>
+    <span>Generated 2026-04-10</span>
+  </footer>
+</div>
+
+<script>
+  // Initialize Mermaid with dark theme
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      background: '#161b22',
+      primaryColor: '#1f6feb',
+      primaryTextColor: '#e6edf3',
+      lineColor: '#8b949e',
+      secondaryColor: '#21262d',
+      tertiaryColor: '#0d1117'
+    }
+  });
+</script>
+</body>
+</html>

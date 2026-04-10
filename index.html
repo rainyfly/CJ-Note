@@ -38,8 +38,27 @@
     .stat .lbl { font-size: .75rem; color: var(--muted); text-transform: uppercase;
                  letter-spacing: .05em; }
 
+    /* Search */
+    .search-wrap { position: relative; margin-bottom: 1rem; }
+    .search-input { width: 100%; background: var(--surface); border: 1px solid var(--border);
+                    border-radius: 8px; padding: .6rem 2.4rem .6rem .9rem; color: var(--text);
+                    font-size: .9rem; font-family: var(--font-sans); outline: none;
+                    transition: border-color .15s; }
+    .search-input::placeholder { color: var(--muted); }
+    .search-input:focus { border-color: var(--accent); }
+    .search-icon { position: absolute; right: .8rem; top: 50%; transform: translateY(-50%);
+                   color: var(--muted); pointer-events: none; font-size: .9rem; }
+    .search-clear { position: absolute; right: .8rem; top: 50%; transform: translateY(-50%);
+                    color: var(--muted); cursor: pointer; font-size: 1rem; display: none;
+                    background: none; border: none; padding: 0; line-height: 1; }
+    .search-clear:hover { color: var(--text); }
+    .results-count { font-size: .8rem; color: var(--muted); margin-bottom: .75rem;
+                     min-height: 1.2em; }
+    mark { background: rgba(88,166,255,.25); color: var(--accent);
+           border-radius: 2px; padding: 0 .1em; font-style: normal; }
+
     /* Filter tags */
-    .filters { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+    .filters { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: 1rem; }
     .tag { background: var(--surface); border: 1px solid var(--border); border-radius: 20px;
            padding: .3rem .8rem; font-size: .8rem; color: var(--muted); cursor: pointer;
            transition: all .15s; }
@@ -61,6 +80,33 @@
     .report-tags { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: .4rem; }
     .rtag { background: rgba(88,166,255,.1); color: var(--accent); border-radius: 4px;
             padding: .1rem .5rem; font-size: .75rem; }
+
+    /* Tag group sections */
+    .tag-group { margin-bottom: 1.5rem; }
+    .tag-group-header { display: flex; align-items: center; gap: .6rem; cursor: pointer;
+                        padding: .45rem .2rem; user-select: none; border-bottom: 1px solid var(--border);
+                        margin-bottom: .75rem; }
+    .tag-group-header:hover .tg-name { color: var(--accent); }
+    .tg-name { font-size: .8rem; font-weight: 700; text-transform: uppercase;
+               letter-spacing: .08em; color: var(--muted); transition: color .15s; }
+    .tg-badge { background: rgba(88,166,255,.12); color: var(--accent); border-radius: 20px;
+                padding: .05rem .55rem; font-size: .75rem; font-weight: 600; }
+    .tg-toggle { margin-left: auto; color: var(--muted); font-size: .8rem;
+                 transition: transform .2s; }
+    .tag-group.collapsed .tg-toggle { transform: rotate(-90deg); }
+    .tag-group-body { display: flex; flex-direction: column; gap: .65rem; }
+    .tag-group.collapsed .tag-group-body { display: none; }
+
+    /* View toggle */
+    .toolbar { display: flex; align-items: center; justify-content: space-between;
+               margin-bottom: .75rem; flex-wrap: wrap; gap: .5rem; }
+    .toolbar .filters { margin-bottom: 0; }
+    .view-toggle { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 6px;
+                   overflow: hidden; flex-shrink: 0; }
+    .view-btn { background: none; border: none; padding: .3rem .65rem; cursor: pointer;
+                color: var(--muted); font-size: .8rem; transition: all .15s; white-space: nowrap; }
+    .view-btn.active { background: var(--accent); color: #0d1117; font-weight: 600; }
+    .view-btn:not(.active):hover { background: rgba(255,255,255,.05); color: var(--text); }
 
     /* Footer */
     .site-footer { text-align: center; padding: 2rem; color: var(--muted); font-size: .8rem;
@@ -88,12 +134,27 @@
     <div class="stat"><div class="num" id="last-updated">—</div><div class="lbl">Last Updated</div></div>
   </div>
 
-  <div class="filters" id="filter-bar">
-    <span class="tag active" data-filter="all">All</span>
-    <span class="tag" data-filter="repo">Repo Analysis</span>
-    <span class="tag" data-filter="paper">Paper Reading</span>
-    <span class="tag" data-filter="feature">Feature Deep Dive</span>
+  <div class="search-wrap">
+    <input class="search-input" id="search-input" type="search"
+           placeholder="搜索报告标题、标签…" autocomplete="off" spellcheck="false">
+    <span class="search-icon" id="search-icon">⌕</span>
+    <button class="search-clear" id="search-clear" aria-label="清空搜索">✕</button>
   </div>
+
+  <div class="toolbar">
+    <div class="filters" id="filter-bar">
+      <span class="tag active" data-filter="all">All</span>
+      <span class="tag" data-filter="repo">Repo Analysis</span>
+      <span class="tag" data-filter="paper">Paper Reading</span>
+      <span class="tag" data-filter="feature">Feature Deep Dive</span>
+    </div>
+    <div class="view-toggle">
+      <button class="view-btn" id="btn-flat" title="平铺列表">≡ List</button>
+      <button class="view-btn active" id="btn-group" title="按标签分组">⊞ Group</button>
+    </div>
+  </div>
+
+  <div class="results-count" id="results-count"></div>
 
   <div class="report-list" id="report-list">
     <!-- reports injected by JS below -->
@@ -108,29 +169,222 @@
 // ── Report Registry ──────────────────────────────────────────
 // Add new entries here (prepend so newest is first)
 const REPORTS = [
+
   {
-    title: "Speculative Decoding Deep Dive",
-    file: "reports/speculative-decoding-deep-dive.html",
-    type: "feature",
-    date: "2026-04-10",
-    tags: ["Speculative Decoding", "Latency", "Draft Model", "vLLM", "TRT-LLM"],
-    desc: "Draft model + verification 机制详解，接受采样等价性证明，有效/无效场景分析，vLLM/TRT-LLM/HuggingFace 实现对比，以及 Medusa/EAGLE/n-gram 变体介绍。"
+    title: "vLLM 整体设计综述",
+    file:  "reports/00-vLLM-整体设计综述.html",
+    type:  "repo",
+    date:  "2026-04-10",
+    tags:  ["vllm", "framework"],
+    desc:  "vLLM v1 整体架构分层、模块全景、核心 Feature 矩阵、进程通信模型与请求全链路综述",
   },
   {
-    title: "vLLM 调度架构深度解析：Continuous Batching 与 PagedAttention",
-    file: "reports/vllm-scheduling-architecture.html",
-    type: "repo",
-    date: "2026-04-10",
-    tags: ["Scheduling", "KV Cache", "PagedAttention", "Continuous Batching"],
-    desc: "深入分析 vLLM 如何通过 PagedAttention（OS 式分页内存管理）和迭代级调度实现 2-24x 吞吐量提升，涵盖调度器状态机、Block Manager 实现、swap/preempt 策略及 v1 架构重构要点。"
+    title: "vLLM Engine 层与 Scheduler 深度解析",
+    file:  "reports/01-vLLM-Engine-Scheduler.html",
+    type:  "repo",
+    date:  "2026-04-10",
+    tags:  ["vllm", "framework"],
+    desc:  "LLMEngine/AsyncLLM/EngineCore 前后端进程分离架构、ZMQ IPC 通信、Scheduler 调度流程与 Chunked Prefill 详解",
+  },
+  {
+    title: "vLLM KV Cache 管理：PagedAttention 与 APC 深度解析",
+    file:  "reports/02-vLLM-KV-Cache.html",
+    type:  "repo",
+    date:  "2026-04-10",
+    tags:  ["vllm", "framework"],
+    desc:  "KVCacheManager、BlockPool 实现、PagedAttention 分页机制、Automatic Prefix Caching (APC) 与 KV Cache Offloading 详解",
+  },
+  {
+    title: "vLLM Worker 与 GPUModelRunner 深度解析",
+    file:  "reports/03-vLLM-Worker-ModelRunner.html",
+    type:  "repo",
+    date:  "2026-04-10",
+    tags:  ["vllm", "framework"],
+    desc:  "GPUWorker、GPUModelRunner、Executor 层架构、InputBatch 组装、CUDAGraph 优化与模型前向执行流程详解",
+  },
+  {
+    title: "vLLM Attention Backend 与分布式并行深度解析",
+    file:  "reports/04-vLLM-Attention-Distributed.html",
+    type:  "repo",
+    date:  "2026-04-10",
+    tags:  ["vllm", "framework"],
+    desc:  "FlashAttention/FlashInfer/Triton 后端选择机制、TP/PP/DP/EP/CP 五种并行策略原理与 NCCL 通信实现详解",
+  },
+  {
+    title: "vLLM Entrypoints 服务入口深度解析",
+    file:  "reports/05-vLLM-Entrypoints.html",
+    type:  "repo",
+    date:  "2026-04-10",
+    tags:  ["vllm", "framework"],
+    desc:  "OpenAI 兼容 API Server、gRPC 服务、LLM/AsyncLLM 离线接口的架构设计与请求处理流程详解",
+  },
+  {
+    title: "vLLM 量化支持深度解析",
+    file:  "reports/06-vLLM-Quantization.html",
+    type:  "repo",
+    date:  "2026-04-10",
+    tags:  ["vllm", "framework"],
+    desc:  "FP8/AWQ/GPTQ/Marlin 等量化方法原理、CUDA 内核实现、模型层量化集成与 KV Cache FP8 详解",
+  },
+  {
+    title: "vLLM 推测解码（Speculative Decoding）深度解析",
+    file:  "reports/07-vLLM-SpecDecode.html",
+    type:  "repo",
+    date:  "2026-04-10",
+    tags:  ["vllm", "framework"],
+    desc:  "vLLM v1 中 EAGLE/N-gram/Medusa 推测解码实现、拒绝采样机制、与调度器集成及性能分析",
   },
   {
     title: "Flash Attention 2 论文研读",
-    file: "reports/flash-attention-2.html",
-    type: "paper",
-    date: "2026-04-10",
-    tags: ["Attention", "GPU Kernel", "Parallelism", "Memory Efficiency"],
-    desc: "深入解析 FA2 相比 FA1 的算法改进：减少非 matmul 运算、序列维度并行、warp 工作划分优化、causal mask skip，以及 MQA/GQA 原生支持。"
+    file:  "reports/flash-attention-2.html",
+    type:  "paper",
+    date:  "2026-04-10",
+    tags:  [],
+    desc:  "",
+  },
+  {
+    title: "Speculative Decoding Deep Dive",
+    file:  "reports/speculative-decoding-deep-dive.html",
+    type:  "feature",
+    date:  "2026-04-10",
+    tags:  [],
+    desc:  "",
+  },
+  {
+    title: "vLLM 调度架构深度解析：Continuous Batching 与 PagedAttention",
+    file:  "reports/vllm-scheduling-architecture.html",
+    type:  "repo",
+    date:  "2026-04-10",
+    tags:  [],
+    desc:  "",
+  },
+  {
+    title: "SGLang 整体设计综述",
+    file:  "reports/00-SGLang-整体设计综述.html",
+    type:  "repo",
+    date:  "2026-04-09",
+    tags:  ["sglang", "framework"],
+    desc:  "",
+  },
+  {
+    title: "SGLang Scheduler 调度系统深度解析",
+    file:  "reports/01-Scheduler调度系统.html",
+    type:  "repo",
+    date:  "2026-04-09",
+    tags:  ["sglang", "framework"],
+    desc:  "",
+  },
+  {
+    title: "SGLang ModelExecutor 模型执行深度解析",
+    file:  "reports/02-ModelExecutor模型执行.html",
+    type:  "repo",
+    date:  "2026-04-09",
+    tags:  ["sglang", "framework"],
+    desc:  "",
+  },
+  {
+    title: "SGLang Models 模型支持",
+    file:  "reports/03-Models模型支持.html",
+    type:  "repo",
+    date:  "2026-04-09",
+    tags:  ["sglang", "framework"],
+    desc:  "",
+  },
+  {
+    title: "SGLang Layers 算子层",
+    file:  "reports/04-Layers算子层.html",
+    type:  "repo",
+    date:  "2026-04-09",
+    tags:  ["sglang", "framework"],
+    desc:  "",
+  },
+  {
+    title: "SGLang Attention 注意力机制深度解析",
+    file:  "reports/05-Attention注意力机制.html",
+    type:  "repo",
+    date:  "2026-04-09",
+    tags:  ["sglang", "framework"],
+    desc:  "",
+  },
+  {
+    title: "SGLang MoE 专家混合模块深度解析",
+    file:  "reports/06-MoE专家混合.html",
+    type:  "repo",
+    date:  "2026-04-09",
+    tags:  ["sglang", "framework"],
+    desc:  "",
+  },
+  {
+    title: "SGLang MemCache 缓存系统深度解析",
+    file:  "reports/07-MemCache缓存系统.html",
+    type:  "repo",
+    date:  "2026-04-09",
+    tags:  ["sglang", "framework"],
+    desc:  "",
+  },
+  {
+    title: "SGLang Sampling 采样系统深度解析",
+    file:  "reports/08-Sampling采样系统.html",
+    type:  "repo",
+    date:  "2026-04-09",
+    tags:  ["sglang", "framework"],
+    desc:  "",
+  },
+  {
+    title: "SGLang Constrained 约束解码深度解析",
+    file:  "reports/09-Constrained约束解码.html",
+    type:  "repo",
+    date:  "2026-04-09",
+    tags:  ["sglang", "framework"],
+    desc:  "",
+  },
+  {
+    title: "SGLang 投机解码 (Speculative Decoding) 深度解析",
+    file:  "reports/10-Speculative投机解码.html",
+    type:  "repo",
+    date:  "2026-04-09",
+    tags:  ["sglang", "framework"],
+    desc:  "",
+  },
+  {
+    title: "SGLang Quantization 量化",
+    file:  "reports/11-Quantization量化.html",
+    type:  "repo",
+    date:  "2026-04-09",
+    tags:  ["sglang", "framework"],
+    desc:  "",
+  },
+  {
+    title: "SGLang LoRA 适配器深度解析",
+    file:  "reports/12-LoRA适配器.html",
+    type:  "repo",
+    date:  "2026-04-09",
+    tags:  ["sglang", "framework"],
+    desc:  "",
+  },
+  {
+    title: "SGLang Distributed 分布式系统深度解析",
+    file:  "reports/13-Distributed分布式.html",
+    type:  "repo",
+    date:  "2026-04-09",
+    tags:  ["sglang", "framework"],
+    desc:  "",
+  },
+  {
+    title: "SGLang Disaggregation 分离架构深度解析",
+    file:  "reports/14-Disaggregation分离架构.html",
+    type:  "repo",
+    date:  "2026-04-09",
+    tags:  ["sglang", "framework"],
+    desc:  "",
+  },
+  {
+    title: "SGLang Entrypoints 服务入口",
+    file:  "reports/15-Entrypoints服务入口.html",
+    type:  "repo",
+    date:  "2026-04-09",
+    tags:  ["sglang", "framework"],
+    desc:  "",
   },
 ];
 
@@ -138,44 +392,159 @@ const REPORTS = [
 const ICONS = { repo: "🏗️", paper: "📄", feature: "⚡" };
 const TYPE_LABELS = { repo: "Repo Analysis", paper: "Paper Reading", feature: "Feature Deep Dive" };
 
-function render(filter = "all") {
-  const list = document.getElementById("report-list");
-  const shown = filter === "all" ? REPORTS : REPORTS.filter(r => r.type === filter);
-
-  if (shown.length === 0) {
-    list.innerHTML = '<p style="color:var(--muted);padding:2rem 0;text-align:center">No reports yet — check back soon.</p>';
-    return;
-  }
-
-  list.innerHTML = shown.map(r => `
-    <a class="report-card" href="${r.file}">
-      <div class="report-icon">${ICONS[r.type] || "📝"}</div>
-      <div class="report-info">
-        <div class="report-title">${r.title}</div>
-        <div class="report-meta">
-          <span>${TYPE_LABELS[r.type]}</span>
-          <span>${r.date}</span>
-        </div>
-        ${r.desc ? `<p style="font-size:.85rem;color:var(--muted);margin-top:.3rem">${r.desc}</p>` : ""}
-        <div class="report-tags">${(r.tags||[]).map(t=>`<span class="rtag">${t}</span>`).join("")}</div>
-      </div>
-    </a>`).join("");
+function highlight(text, query) {
+  if (!query) return escHtml(text);
+  const safe = escHtml(text);
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return safe.replace(new RegExp(escaped, "gi"), m => `<mark>${m}</mark>`);
+}
+function escHtml(s) {
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+function matchesQuery(r, query) {
+  if (!query) return true;
+  const q = query.toLowerCase();
+  return r.title.toLowerCase().includes(q) ||
+         (r.desc  || "").toLowerCase().includes(q) ||
+         (r.tags  || []).some(t => t.toLowerCase().includes(q));
 }
 
-// Stats
+let activeFilter = "all";
+let activeQuery  = "";
+let viewMode     = "group";  // "flat" | "group"
+
+// Single card — shared by both view modes
+function renderCard(r) {
+  return `
+    <a class="report-card" href="${escHtml(r.file)}">
+      <div class="report-icon">${ICONS[r.type] || "📝"}</div>
+      <div class="report-info">
+        <div class="report-title">${highlight(r.title, activeQuery)}</div>
+        <div class="report-meta">
+          <span>${TYPE_LABELS[r.type] || r.type}</span>
+          <span>${escHtml(r.date)}</span>
+        </div>
+        ${r.desc ? `<p style="font-size:.85rem;color:var(--muted);margin-top:.3rem">${highlight(r.desc, activeQuery)}</p>` : ""}
+        <div class="report-tags">${(r.tags||[]).map(t=>`<span class="rtag">${highlight(t, activeQuery)}</span>`).join("")}</div>
+      </div>
+    </a>`;
+}
+
+// Group reports by first tag; no-tag reports go into "__general__"
+function groupByFirstTag(reports) {
+  const GENERAL = "__general__";
+  const map = {};
+  reports.forEach(r => {
+    const key = (r.tags && r.tags.length) ? r.tags[0] : GENERAL;
+    (map[key] = map[key] || []).push(r);
+  });
+  const sorted = Object.keys(map).filter(k => k !== GENERAL).sort()
+    .concat(map[GENERAL] ? [GENERAL] : []);
+  return { map, sorted, GENERAL };
+}
+
+function renderGrouped(reports) {
+  const { map, sorted, GENERAL } = groupByFirstTag(reports);
+  if (!sorted.length) return emptyMsg();
+  return sorted.map(key => {
+    const label = key === GENERAL ? "General" : key;
+    const id    = "grp-" + key.replace(/\W/g, "_");
+    return `
+      <div class="tag-group" id="${id}">
+        <div class="tag-group-header" onclick="toggleGroup('${id}')">
+          <span class="tg-name">${escHtml(label)}</span>
+          <span class="tg-badge">${map[key].length}</span>
+          <span class="tg-toggle">▾</span>
+        </div>
+        <div class="tag-group-body">${map[key].map(renderCard).join("")}</div>
+      </div>`;
+  }).join("");
+}
+
+function toggleGroup(id) {
+  document.getElementById(id).classList.toggle("collapsed");
+}
+
+function emptyMsg() {
+  return '<p style="color:var(--muted);padding:2rem 0;text-align:center">没有找到匹配的报告。</p>';
+}
+
+function render() {
+  const list    = document.getElementById("report-list");
+  const countEl = document.getElementById("results-count");
+
+  const filtered = REPORTS.filter(r =>
+    (activeFilter === "all" || r.type === activeFilter) &&
+    matchesQuery(r, activeQuery)
+  );
+
+  countEl.textContent = activeQuery
+    ? (filtered.length === 0 ? `No results for "${activeQuery}"` : `${filtered.length} / ${REPORTS.length} reports`)
+    : "";
+
+  if (!filtered.length) { list.innerHTML = emptyMsg(); return; }
+
+  list.innerHTML = viewMode === "group"
+    ? renderGrouped(filtered)
+    : filtered.map(renderCard).join("");
+}
+
+// ── Stats ─────────────────────────────────────────────────────
 document.getElementById("total-count").textContent = REPORTS.length;
 if (REPORTS.length > 0) {
   document.getElementById("last-updated").textContent =
-    REPORTS.slice().sort((a,b)=>b.date.localeCompare(a.date))[0].date;
+    REPORTS.slice().sort((a,b) => b.date.localeCompare(a.date))[0].date;
 }
 
-// Filter logic
+// ── Type filter ───────────────────────────────────────────────
 document.querySelectorAll(".tag").forEach(t => {
   t.addEventListener("click", () => {
-    document.querySelectorAll(".tag").forEach(x=>x.classList.remove("active"));
+    document.querySelectorAll(".tag").forEach(x => x.classList.remove("active"));
     t.classList.add("active");
-    render(t.dataset.filter);
+    activeFilter = t.dataset.filter;
+    render();
   });
+});
+
+// ── View toggle ───────────────────────────────────────────────
+document.getElementById("btn-flat").addEventListener("click", () => {
+  viewMode = "flat";
+  document.getElementById("btn-flat").classList.add("active");
+  document.getElementById("btn-group").classList.remove("active");
+  render();
+});
+document.getElementById("btn-group").addEventListener("click", () => {
+  viewMode = "group";
+  document.getElementById("btn-group").classList.add("active");
+  document.getElementById("btn-flat").classList.remove("active");
+  render();
+});
+
+// ── Search ────────────────────────────────────────────────────
+const searchInput = document.getElementById("search-input");
+const searchIcon  = document.getElementById("search-icon");
+const searchClear = document.getElementById("search-clear");
+
+searchInput.addEventListener("input", () => {
+  activeQuery = searchInput.value.trim();
+  const hasText = activeQuery.length > 0;
+  searchClear.style.display = hasText ? "block" : "none";
+  searchIcon.style.display  = hasText ? "none"  : "block";
+  render();
+});
+searchClear.addEventListener("click", () => {
+  searchInput.value = "";
+  activeQuery = "";
+  searchClear.style.display = "none";
+  searchIcon.style.display  = "block";
+  searchInput.focus();
+  render();
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "/" && document.activeElement !== searchInput) {
+    e.preventDefault(); searchInput.focus(); searchInput.select();
+  }
+  if (e.key === "Escape" && document.activeElement === searchInput) searchInput.blur();
 });
 
 render();

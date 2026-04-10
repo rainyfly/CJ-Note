@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang Quantization 量化">
+  <meta name="report-type"  content="repo">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang Quantization 量化">
+  <meta name="report-type"  content="sglang">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+  <title>SGLang Quantization 量化</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}:root{--bg:#0d1117;--bg2:#161b22;--bg3:#1c2128;--border:#30363d;--text:#e6edf3;--text2:#8b949e;--text3:#656d76;--cyan:#39d0d8;--blue:#58a6ff;--green:#3fb950;--yellow:#e3b341;--orange:#f78166;--purple:#bc8cff;--red:#f85149;--font-mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace}html{scroll-behavior:smooth}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif;background:var(--bg);color:var(--text);line-height:1.75;font-size:16px}.page-wrap{display:grid;grid-template-columns:260px 1fr;min-height:100vh}@media(max-width:900px){.page-wrap{grid-template-columns:1fr}.sidebar{display:none}}.sidebar{position:sticky;top:0;height:100vh;overflow-y:auto;background:var(--bg2);border-right:1px solid var(--border);padding:24px 16px}.sidebar-brand{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:16px}.toc a{display:block;padding:6px 8px;font-size:13px;color:var(--text2);text-decoration:none;border-radius:6px;margin-bottom:2px}.toc a:hover{background:var(--bg3);color:var(--cyan)}.toc .sub{padding-left:16px;font-size:12px}main{max-width:960px;margin:0 auto;padding:48px 32px}h1{font-size:2.2rem;margin-bottom:8px;background:linear-gradient(135deg,var(--cyan),var(--blue));-webkit-background-clip:text;-webkit-text-fill-color:transparent}.subtitle{color:var(--text2);font-size:1rem;margin-bottom:40px}h2{font-size:1.5rem;color:var(--cyan);margin:48px 0 16px;padding-bottom:8px;border-bottom:1px solid var(--border)}h3{font-size:1.15rem;color:var(--blue);margin:32px 0 12px}h4{font-size:1rem;color:var(--purple);margin:24px 0 8px}p,li{color:var(--text);margin-bottom:12px}ul,ol{padding-left:24px}a{color:var(--blue);text-decoration:none}.card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px;margin:16px 0}.card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin:16px 0}.tag{display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600;margin:2px 4px 2px 0}.tag-cyan{background:rgba(57,208,216,0.15);color:var(--cyan)}.tag-green{background:rgba(63,185,80,0.15);color:var(--green)}.tag-yellow{background:rgba(227,179,65,0.15);color:var(--yellow)}.tag-orange{background:rgba(247,129,102,0.15);color:var(--orange)}.tag-purple{background:rgba(188,140,255,0.15);color:var(--purple)}.tag-red{background:rgba(248,81,73,0.15);color:var(--red)}table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px}th,td{padding:10px 14px;text-align:left;border:1px solid var(--border)}th{background:var(--bg3);color:var(--cyan);font-weight:600}td{background:var(--bg2)}code{font-family:var(--font-mono);background:var(--bg3);padding:2px 6px;border-radius:4px;font-size:0.9em;color:var(--orange)}pre{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:16px;overflow-x:auto;margin:16px 0;font-size:13px;line-height:1.6}pre code{background:none;padding:0;color:var(--text)}.mermaid{background:var(--bg2);border-radius:12px;padding:20px;margin:16px 0;display:flex;justify-content:center}.highlight{background:rgba(57,208,216,0.08);border-left:3px solid var(--cyan);padding:16px 20px;border-radius:0 8px 8px 0;margin:16px 0}
+  </style>
+</head>
+<body>
+<div class="page-wrap">
+  <nav class="sidebar">
+    <div class="sidebar-brand">SGLang Research</div>
+    <div class="toc">
+      <a href="00-SGLang-整体设计综述.html">&#8592; 返回综述</a>
+      <a href="#overview">量化概述</a>
+      <a href="#arch">量化架构</a>
+      <a href="#fp8">FP8 量化</a>
+      <a href="#int8">INT8 量化</a>
+      <a href="#gptq">GPTQ</a>
+      <a href="#awq">AWQ</a>
+      <a href="#marlin">Marlin</a>
+      <a href="#bnb">BitsAndBytes</a>
+      <a href="#mxfp4">MXFP4</a>
+      <a href="#kvcache">KV Cache 量化</a>
+      <a href="#compressed">Compressed Tensors</a>
+    </div>
+  </nav>
+  <main>
+    <h1>11 - Quantization 量化</h1>
+    <p class="subtitle">SGLang 量化方案全景：FP8、INT8、GPTQ、AWQ 及更多</p>
+
+    <h2 id="overview">1. 量化概述</h2>
+    <p>SGLang 在 <code>srt/layers/quantization/</code> 下实现了 20+ 种量化方案，覆盖权重量化 (Weight-Only) 和权重-激活量化 (Weight-Activation) 两大类。量化系统通过插件化设计与 Linear 层解耦。</p>
+
+    <h2 id="arch">2. 量化架构</h2>
+
+    <div class="mermaid">
+flowchart TD
+    A["ServerArgs.quantization"] --> B["QuantizationConfig 工厂"]
+    B --> C{"量化方法选择"}
+    C --> D["FP8Config"]
+    C --> E["GPTQConfig"]
+    C --> F["AWQConfig"]
+    C --> G["Int8Config"]
+    C --> H["BitsAndBytesConfig"]
+    C --> I["MarlinConfig"]
+    C --> J["...其他"]
+
+    D --> K["get_quant_method(layer)"]
+    K --> L["QuantizedLinearMethod"]
+    L --> M["替换 Linear.forward()"]
+    L --> N["替换 Linear.weight 参数创建"]
+    </div>
+
+    <div class="card">
+      <h4>量化系统核心接口</h4>
+      <pre><code>class QuantizationConfig:
+    """量化配置基类"""
+    @abstractmethod
+    def get_quant_method(self, layer, prefix) -> QuantizeMethodBase:
+        """返回该层对应的量化方法"""
+
+class QuantizeMethodBase:
+    """量化方法基类"""
+    def create_weights(self, ...):  # 创建量化权重参数
+    def apply(self, ...):           # 量化前向计算</code></pre>
+    </div>
+
+    <h2 id="fp8">3. FP8 量化</h2>
+    <span class="tag tag-green">W8A8</span> <span class="tag tag-cyan">Hopper+</span>
+
+    <p><code>fp8.py</code> + <code>fp8_kernel.py</code> 实现了 FP8 (E4M3) 权重-激活量化：</p>
+
+    <table>
+      <tr><th>特性</th><th>说明</th></tr>
+      <tr><td>格式</td><td>E4M3FN (权重和激活均为 FP8)</td></tr>
+      <tr><td>缩放</td><td>Per-tensor 或 Per-channel scale</td></tr>
+      <tr><td>硬件</td><td>NVIDIA Hopper (H100) FP8 TensorCore</td></tr>
+      <tr><td>后端</td><td>CUTLASS FP8 GEMM / Triton FP8 kernel</td></tr>
+      <tr><td>动态量化</td><td>支持运行时动态计算 activation scale</td></tr>
+    </table>
+
+    <div class="mermaid">
+flowchart LR
+    A["FP16 Activation"] --> B["Dynamic Quantize<br/>to FP8 E4M3"]
+    C["FP8 Weight<br/>(预量化)"] --> D["FP8 GEMM<br/>(TensorCore)"]
+    B --> D
+    D --> E["FP16 Output<br/>(反量化)"]
+    </div>
+
+    <h2 id="int8">4. INT8 量化</h2>
+    <span class="tag tag-green">W8A8</span>
+
+    <p><code>w8a8_int8.py</code> + <code>int8_kernel.py</code> 实现 INT8 权重-激活量化：</p>
+    <ul>
+      <li>Per-token 动态激活量化</li>
+      <li>Per-channel 静态权重量化</li>
+      <li>SmoothQuant 风格的 INT8 GEMM</li>
+    </ul>
+
+    <h2 id="gptq">5. GPTQ</h2>
+    <span class="tag tag-yellow">Weight-Only</span> <span class="tag tag-orange">4-bit / 8-bit</span>
+
+    <p><code>gptq.py</code> 支持 GPTQ 量化模型的推理：</p>
+    <ul>
+      <li>支持 4-bit 和 8-bit 权重</li>
+      <li>支持 group_size 分组量化</li>
+      <li>底层使用 CUDA kernel 进行反量化+GEMM</li>
+      <li>可选 Marlin kernel 加速 (4-bit)</li>
+    </ul>
+
+    <h2 id="awq">6. AWQ</h2>
+    <span class="tag tag-yellow">Weight-Only</span> <span class="tag tag-orange">4-bit</span>
+
+    <p><code>awq.py</code> + <code>awq_triton.py</code> 支持 AWQ (Activation-aware Weight Quantization)：</p>
+    <ul>
+      <li>4-bit 权重量化，保护重要通道</li>
+      <li>Triton 反量化 kernel</li>
+      <li>可切换 Marlin 后端获得更高性能</li>
+    </ul>
+
+    <h2 id="marlin">7. Marlin</h2>
+    <span class="tag tag-green">高性能</span> <span class="tag tag-cyan">4-bit</span>
+
+    <p><code>marlin_utils.py</code> + <code>marlin_utils_fp8.py</code> 集成了 Marlin 高性能量化 kernel：</p>
+    <ul>
+      <li>针对 4-bit Weight-Only 量化的高度优化 CUDA kernel</li>
+      <li>支持 GPTQ 和 AWQ 格式的 Marlin 后端</li>
+      <li>FP8 Marlin 变体</li>
+      <li>接近 FP16 的推理速度</li>
+    </ul>
+
+    <h2 id="bnb">8. BitsAndBytes</h2>
+    <span class="tag tag-purple">易用</span> <span class="tag tag-orange">4-bit / 8-bit</span>
+
+    <p><code>bitsandbytes.py</code> 集成了 BitsAndBytes 库：</p>
+    <ul>
+      <li>NF4 (NormalFloat4) 量化</li>
+      <li>LLM.int8() 混合精度</li>
+      <li>简单易用，适合快速部署</li>
+    </ul>
+
+    <h2 id="mxfp4">9. MXFP4</h2>
+    <span class="tag tag-cyan">前沿</span> <span class="tag tag-green">4-bit</span>
+
+    <p><code>mxfp4.py</code> + <code>mxfp4_tensor.py</code> 实现了 Microscaling FP4 格式：</p>
+    <ul>
+      <li>基于 OCP MX 标准的 FP4 格式</li>
+      <li>Block-wise 缩放 (block_size=32)</li>
+      <li>适用于下一代硬件加速</li>
+    </ul>
+
+    <h2 id="kvcache">10. KV Cache 量化</h2>
+
+    <p><code>kv_cache.py</code> + <code>kvfp4_tensor.py</code> 实现了 KV Cache 的量化压缩：</p>
+
+    <div class="card-grid">
+      <div class="card">
+        <h4>KV Cache FP8</h4>
+        <span class="tag tag-green">推荐</span>
+        <p>将 KV Cache 从 FP16 压缩到 FP8，显存节省约 50%，精度损失极小。</p>
+      </div>
+      <div class="card">
+        <h4>KV Cache FP4</h4>
+        <span class="tag tag-yellow">实验性</span>
+        <p>进一步压缩到 FP4，显存节省 75%，适用于超长上下文场景。</p>
+      </div>
+    </div>
+
+    <h2 id="compressed">11. Compressed Tensors 框架</h2>
+
+    <p><code>compressed_tensors/</code> 子目录实现了 Neural Magic 的 Compressed Tensors 格式支持：</p>
+    <ul>
+      <li>统一的量化模型加载格式</li>
+      <li>支持多种 scheme (W8A8-INT8, W8A8-FP8, W4A16, etc.)</li>
+      <li>与 SparseML/DeepSparse 生态兼容</li>
+    </ul>
+
+    <h3>量化方案对比</h3>
+    <table>
+      <tr><th>方案</th><th>位宽</th><th>类型</th><th>精度</th><th>速度</th><th>显存节省</th></tr>
+      <tr><td>FP8 W8A8</td><td>8-bit</td><td>Weight+Activation</td><td>高</td><td>快 (Hopper)</td><td>~50%</td></tr>
+      <tr><td>INT8 W8A8</td><td>8-bit</td><td>Weight+Activation</td><td>高</td><td>快</td><td>~50%</td></tr>
+      <tr><td>GPTQ 4-bit</td><td>4-bit</td><td>Weight-Only</td><td>中</td><td>中</td><td>~75%</td></tr>
+      <tr><td>AWQ 4-bit</td><td>4-bit</td><td>Weight-Only</td><td>中-高</td><td>中</td><td>~75%</td></tr>
+      <tr><td>Marlin 4-bit</td><td>4-bit</td><td>Weight-Only</td><td>中</td><td>快</td><td>~75%</td></tr>
+      <tr><td>BnB NF4</td><td>4-bit</td><td>Weight-Only</td><td>中</td><td>慢</td><td>~75%</td></tr>
+      <tr><td>MXFP4</td><td>4-bit</td><td>Weight+Activation</td><td>中</td><td>快 (新硬件)</td><td>~75%</td></tr>
+    </table>
+  </main>
+</div>
+<script>mermaid.initialize({startOnLoad:true,theme:'dark'});</script>
+</body>
+</html>

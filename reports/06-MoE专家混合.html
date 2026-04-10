@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang MoE 专家混合模块深度解析">
+  <meta name="report-type"  content="repo">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="SGLang MoE 专家混合模块深度解析">
+  <meta name="report-type"  content="sglang">
+  <meta name="report-date"  content="2026-04-09">
+  <meta name="report-tags"  content="sglang, framework">
+  <meta name="report-desc"  content="">
+
+<title>SGLang MoE 专家混合模块深度解析</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-secondary: #161b22;
+    --bg-tertiary: #1c2333;
+    --cyan: #39d0d8;
+    --cyan-dim: #1a6b6f;
+    --text: #e6edf3;
+    --text-dim: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --orange: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --border: #30363d;
+    --code-bg: #0d1117;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    display: flex;
+  }
+  /* Sidebar */
+  .sidebar {
+    position: fixed;
+    left: 0; top: 0;
+    width: 300px;
+    height: 100vh;
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 20px 0;
+    z-index: 100;
+  }
+  .sidebar h2 {
+    color: var(--cyan);
+    font-size: 15px;
+    padding: 0 20px 15px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 10px;
+  }
+  .sidebar a {
+    display: block;
+    color: var(--text-dim);
+    text-decoration: none;
+    padding: 6px 20px;
+    font-size: 13px;
+    border-left: 3px solid transparent;
+    transition: all 0.2s;
+  }
+  .sidebar a:hover, .sidebar a.active {
+    color: var(--cyan);
+    background: rgba(57,208,216,0.05);
+    border-left-color: var(--cyan);
+  }
+  .sidebar .s2 { padding-left: 35px; font-size: 12px; }
+  /* Main */
+  .main {
+    margin-left: 300px;
+    max-width: 960px;
+    padding: 40px 50px 100px;
+    width: calc(100% - 300px);
+  }
+  h1 {
+    font-size: 32px;
+    color: var(--cyan);
+    margin-bottom: 8px;
+    border-bottom: 2px solid var(--cyan-dim);
+    padding-bottom: 12px;
+  }
+  .subtitle { color: var(--text-dim); margin-bottom: 40px; font-size: 14px; }
+  h2 {
+    font-size: 24px;
+    color: var(--cyan);
+    margin: 50px 0 20px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 { font-size: 18px; color: var(--accent); margin: 30px 0 12px; }
+  h4 { font-size: 15px; color: var(--green); margin: 20px 0 8px; }
+  p { margin-bottom: 14px; color: var(--text); }
+  ul, ol { margin: 10px 0 14px 24px; }
+  li { margin-bottom: 6px; }
+  code {
+    background: var(--bg-tertiary);
+    color: var(--cyan);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: 'SFMono-Regular', Consolas, monospace;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    overflow-x: auto;
+    margin: 14px 0;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; }
+  .mermaid {
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    padding: 20px;
+    margin: 20px 0;
+    text-align: center;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 10px 14px;
+    text-align: left;
+  }
+  th { background: var(--bg-tertiary); color: var(--cyan); }
+  tr:hover { background: rgba(57,208,216,0.03); }
+  .callout {
+    background: rgba(57,208,216,0.06);
+    border-left: 4px solid var(--cyan);
+    padding: 14px 18px;
+    border-radius: 0 8px 8px 0;
+    margin: 16px 0;
+  }
+  .callout-warn {
+    background: rgba(210,153,34,0.06);
+    border-left-color: var(--orange);
+  }
+  .tag {
+    display: inline-block;
+    background: var(--bg-tertiary);
+    color: var(--cyan);
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    margin-right: 6px;
+  }
+  .file-path {
+    color: var(--text-dim);
+    font-size: 12px;
+    font-family: monospace;
+    margin-bottom: 8px;
+  }
+</style>
+</head>
+<body>
+
+<nav class="sidebar">
+  <h2>MoE 专家混合模块</h2>
+  <a href="#overview">1. 架构总览</a>
+  <a href="#routing" class="s2">1.1 路由机制</a>
+  <a href="#topk" class="s2">1.2 TopK 选择</a>
+  <a href="#fused-moe">2. Fused MoE 内核</a>
+  <a href="#triton-kernel" class="s2">2.1 Triton 内核</a>
+  <a href="#fused-moe-impl" class="s2">2.2 实现细节</a>
+  <a href="#moe-runner">3. MoE Runner 框架</a>
+  <a href="#runner-backends" class="s2">3.1 运行后端</a>
+  <a href="#runner-arch" class="s2">3.2 架构设计</a>
+  <a href="#ep-moe">4. Expert Parallelism</a>
+  <a href="#deepep" class="s2">4.1 DeepEP 实现</a>
+  <a href="#ep-dispatch" class="s2">4.2 Token 分发</a>
+  <a href="#token-dispatcher">5. Token Dispatcher</a>
+  <a href="#dispatcher-base" class="s2">5.1 基础抽象</a>
+  <a href="#dispatcher-deepep" class="s2">5.2 DeepEP Dispatcher</a>
+  <a href="#eplb">6. EPLB 负载均衡</a>
+  <a href="#eplb-manager" class="s2">6.1 EPLB Manager</a>
+  <a href="#eplb-algo" class="s2">6.2 重平衡算法</a>
+  <a href="#expert-location" class="s2">6.3 专家位置映射</a>
+  <a href="#cutlass-moe">7. CUTLASS MoE</a>
+  <a href="#quantization">8. 量化支持</a>
+  <a href="#tbo">9. 双批次重叠</a>
+  <a href="#capturer">10. 路由专家捕获</a>
+  <a href="#summary">11. 总结</a>
+</nav>
+
+<div class="main">
+
+<h1>SGLang MoE 专家混合模块深度解析</h1>
+<p class="subtitle">源码路径: sglang/srt/layers/moe/ &amp; sglang/srt/eplb/ -- 涵盖路由、融合内核、专家并行、负载均衡全链路</p>
+
+<!-- ==================== Section 1 ==================== -->
+<h2 id="overview">1. MoE 架构总览</h2>
+
+<p>Mixture of Experts (MoE) 是现代大型语言模型（如 DeepSeek V2/V3/R1、Mixtral、Qwen3-MoE、Kimi K2 等）的核心稀疏架构。SGLang 实现了一套完整的 MoE 推理框架，覆盖从门控路由、融合计算到多机专家并行的全流程。</p>
+
+<div class="mermaid">
+graph TB
+    subgraph "MoE 层前向传播"
+        A[Hidden States<br/>输入张量] --> B[Gate / Router<br/>门控网络]
+        B --> C[TopK Selection<br/>专家选择]
+        C --> D{Expert Parallelism?}
+        D -->|No| E[Fused MoE Kernel<br/>本地融合计算]
+        D -->|Yes| F[Token Dispatcher<br/>令牌分发]
+        F --> G[All-to-All<br/>跨节点通信]
+        G --> H[Local Expert Compute<br/>本地专家计算]
+        H --> I[All-to-All Combine<br/>结果聚合]
+        I --> J[Output<br/>输出]
+        E --> J
+    end
+    style B fill:#1a3a4a,stroke:#39d0d8,color:#e6edf3
+    style C fill:#1a3a4a,stroke:#39d0d8,color:#e6edf3
+    style F fill:#2a1a3a,stroke:#bc8cff,color:#e6edf3
+    style G fill:#2a1a3a,stroke:#bc8cff,color:#e6edf3
+    style H fill:#1a2a1a,stroke:#3fb950,color:#e6edf3
+</div>
+
+<h3 id="routing">1.1 路由机制 (Router)</h3>
+<p class="file-path">sglang/srt/layers/moe/router.py</p>
+
+<p>SGLang 实现了两种高效的融合路由内核，通过 <code>FusedMoeRouter</code> 类统一管理：</p>
+
+<div class="callout">
+<strong>自适应路由选择策略：</strong>当批量较大（bs >= 512）或专家数量较多（> 8 个）时，使用 <strong>TensorCore 内核</strong>进行矩阵乘法加速；否则使用 <strong>CudaCore 内核</strong>进行逐元素计算。
+</div>
+
+<h4>CudaCore 路由内核</h4>
+<p>使用 Triton JIT 编译，每个 program 处理一个 token。核心步骤：</p>
+<ol>
+  <li><strong>路由矩阵乘法</strong>：计算 <code>logits = hidden_states @ router_weight.T</code></li>
+  <li><strong>Softcapping</strong>：<code>tanh(logits/cap) * cap</code>，防止 logits 过大</li>
+  <li><strong>Correction Bias</strong>：添加纠正偏置（DeepSeek V3 使用 sigmoid + bias）</li>
+  <li><strong>TopK 选取</strong>：迭代选择 top-k 专家并计算 softmax 权重</li>
+</ol>
+
+<h4>TensorCore 路由内核</h4>
+<p>使用分块矩阵乘法（BLOCK_SIZE_M x BLOCK_SIZE_N x BLOCK_SIZE_K），利用 TensorCore 的 <code>tl.dot</code> 指令加速路由计算。支持批量处理多个 token，适合高吞吐场景。</p>
+
+<pre><code># 路由内核自动选择逻辑
+if (bs >= 512 or num_experts > 8) and hidden_dim % BLOCK_SIZE_K == 0:
+    # TensorCore 路径 - 大批量/多专家
+    return fused_moe_router_tensorcore(...)
+else:
+    # CudaCore 路径 - 小批量/少专家
+    return fused_moe_router_cudacore(...)</code></pre>
+
+<h3 id="topk">1.2 TopK 选择 (topk.py)</h3>
+<p class="file-path">sglang/srt/layers/moe/topk.py</p>
+
+<p><code>TopK</code> 类是一个多平台操作（继承 <code>MultiPlatformOp</code>），提供 CUDA、CPU、NPU 等不同硬件后端的实现。</p>
+
+<div class="mermaid">
+flowchart TD
+    A[TopK.forward] --> B{平台检测}
+    B -->|CUDA| C[forward_cuda]
+    B -->|CPU| D[forward_cpu]
+    B -->|NPU| E[forward_npu]
+    C --> F{输出格式}
+    F -->|TRITON_KERNEL| G[triton_kernels routing]
+    F -->|BYPASSED| H[延迟计算路径]
+    F -->|STANDARD| I[select_experts]
+    I --> J{路由类型}
+    J -->|grouped_topk| K[DeepSeek V2/V3<br/>分组 TopK]
+    J -->|biased_grouped_topk| L[DeepSeek V3<br/>带偏置分组 TopK]
+    J -->|fused_topk| M[标准 TopK<br/>Qwen3-MoE 等]
+    J -->|custom_routing| N[自定义路由函数]
+    style C fill:#1a3a4a,stroke:#39d0d8,color:#e6edf3
+    style K fill:#1a2a3a,stroke:#58a6ff,color:#e6edf3
+    style L fill:#1a2a3a,stroke:#58a6ff,color:#e6edf3
+</div>
+
+<table>
+<tr><th>路由方式</th><th>适用模型</th><th>关键特征</th></tr>
+<tr><td><code>fused_topk</code></td><td>Qwen3-MoE, Mixtral</td><td>标准 softmax TopK</td></tr>
+<tr><td><code>grouped_topk</code></td><td>DeepSeek V2</td><td>分组选择，先选组再选专家</td></tr>
+<tr><td><code>biased_grouped_topk</code></td><td>DeepSeek V3/R1</td><td>sigmoid + bias + 分组</td></tr>
+<tr><td><code>kimi_k2_biased_topk</code></td><td>Kimi K2 (384 experts)</td><td>优化的单组 sigmoid TopK</td></tr>
+</table>
+
+<h4>分组 TopK 算法 (DeepSeek V2/V3)</h4>
+<p>DeepSeek 系列使用分层选择策略：</p>
+<ol>
+  <li>将专家分为 <code>num_expert_group</code> 组</li>
+  <li>对每组取最大分数，选出 <code>topk_group</code> 个最佳组</li>
+  <li>在选中的组内选择 top-k 个专家</li>
+  <li>可选地添加 correction_bias 进行偏置校正</li>
+</ol>
+
+<p>SGLang 提供多种加速实现：</p>
+<ul>
+  <li><strong>FlashInfer fused_topk_deepseek</strong>：针对 DeepSeek 优化的融合内核</li>
+  <li><strong>sgl_kernel moe_fused_gate</strong>：SGLang 自研的融合门控内核</li>
+  <li><strong>kimi_k2_moe_fused_gate</strong>：针对 384 专家的 Kimi K2 特化内核</li>
+  <li><strong>AIter biased_grouped_topk</strong>：AMD ROCm 平台优化</li>
+</ul>
+
+<!-- ==================== Section 2 ==================== -->
+<h2 id="fused-moe">2. Fused MoE 内核</h2>
+
+<h3 id="triton-kernel">2.1 Triton Fused MoE 内核</h3>
+<p class="file-path">sglang/srt/layers/moe/fused_moe_triton/fused_moe.py</p>
+
+<p>核心的融合 MoE 实现将排序、GEMM、激活函数、加权求和全部融合在一起，避免中间结果的显存读写。</p>
+
+<div class="mermaid">
+flowchart LR
+    subgraph "Fused MoE 计算流程"
+        A[输入 hidden_states<br/>shape: M x K] --> B[moe_align_block_size<br/>Token 排序对齐]
+        B --> C[GEMM1: x @ W1<br/>上投影]
+        C --> D[SiLU / GeLU 激活<br/>+ Gate 乘法]
+        D --> E[GEMM2: act @ W2<br/>下投影]
+        E --> F[加权求和<br/>moe_sum_reduce]
+        F --> G[输出 hidden_states<br/>shape: M x K]
+    end
+    style B fill:#1a3a4a,stroke:#39d0d8,color:#e6edf3
+    style C fill:#2a1a3a,stroke:#bc8cff,color:#e6edf3
+    style D fill:#1a2a1a,stroke:#3fb950,color:#e6edf3
+    style E fill:#2a1a3a,stroke:#bc8cff,color:#e6edf3
+</div>
+
+<h3 id="fused-moe-impl">2.2 实现细节</h3>
+
+<h4>Token 排序与对齐</h4>
+<p><code>moe_align_block_size</code> 函数将 token 按专家分组并对齐到 BLOCK_SIZE_M 的倍数，返回：</p>
+<ul>
+  <li><code>sorted_token_ids</code>：排序后的 token 索引</li>
+  <li><code>expert_ids</code>：每个 block 对应的专家 ID</li>
+  <li><code>num_tokens_post_padded</code>：填充后的总 token 数</li>
+</ul>
+
+<h4>分块计算策略</h4>
+<pre><code># 大批量分块处理，避免显存溢出
+CHUNK_SIZE = 64 * 1024  # 每块最多 64K token
+for chunk in range((num_tokens // CHUNK_SIZE) + 1):
+    # 1. GEMM1: 上投影 (hidden_size -> intermediate_size * 2)
+    invoke_fused_moe_kernel(hidden, w1, intermediate_cache1, ...)
+
+    # 2. 激活函数 (SiLU-and-Mul 或 GeLU-and-Mul)
+    silu_and_mul(intermediate_cache1, intermediate_cache2)
+
+    # 3. GEMM2: 下投影 (intermediate_size -> hidden_size)
+    invoke_fused_moe_kernel(intermediate_cache2, w2, intermediate_cache3, ...)
+
+    # 4. 加权求和
+    moe_sum_reduce(intermediate_cache3, out_hidden_states, scaling_factor)</code></pre>
+
+<h4>Inplace vs Outplace 模式</h4>
+<table>
+<tr><th>模式</th><th>内存使用</th><th>适用场景</th></tr>
+<tr><td><code>inplace_fused_experts</code></td><td>原地修改输入</td><td>标准推理，节省显存</td></tr>
+<tr><td><code>outplace_fused_experts</code></td><td>分配新输出</td><td>EP 模式下的 no_combine</td></tr>
+</table>
+
+<h4>TMA 优化 (Tensor Memory Accelerator)</h4>
+<p>对于 Blackwell+ 架构，下投影 GEMM 支持 TMA 描述符加速数据传输。<code>down_moe_use_tma</code> 标志控制是否启用 TMA，可显著减少数据搬运延迟。</p>
+
+<!-- ==================== Section 3 ==================== -->
+<h2 id="moe-runner">3. MoE Runner 框架</h2>
+
+<h3 id="runner-backends">3.1 运行后端</h3>
+<p class="file-path">sglang/srt/layers/moe/moe_runner/runner.py</p>
+
+<p>MoE Runner 是一个抽象的执行框架，统一管理不同的计算后端。</p>
+
+<div class="mermaid">
+graph TB
+    subgraph "MoeRunnerBackend 枚举"
+        A[AUTO] --> B{自动选择}
+        B --> C[TRITON<br/>Triton 内核]
+        B --> D[DEEP_GEMM<br/>DeepGemm JIT]
+        B --> E[TRITON_KERNELS<br/>triton_kernels 库]
+        B --> F[FLASHINFER_TRTLLM<br/>FlashInfer TRT-LLM]
+        B --> G[FLASHINFER_CUTLASS<br/>FlashInfer CUTLASS]
+        B --> H[FLASHINFER_MXFP4<br/>FlashInfer MXFP4]
+        B --> I[CUTLASS<br/>CUTLASS 内核]
+        B --> J[MARLIN<br/>Marlin 量化内核]
+    end
+    style A fill:#1a3a4a,stroke:#39d0d8,color:#e6edf3
+</div>
+
+<h3 id="runner-arch">3.2 架构设计</h3>
+
+<p><code>MoeRunner</code> 采用策略模式，核心组件：</p>
+<ul>
+  <li><strong>RunnerCore</strong>：实际的计算核心（TritonRunnerCore / DeepGemmRunnerCore / TritonKernelsRunnerCore）</li>
+  <li><strong>FusedOpPool</strong>：融合算子注册池，允许将 A2A 通信与计算融合</li>
+  <li><strong>PermuteMethodPool</strong>：pre_permute / post_permute 方法池，处理不同 dispatch 格式和 runner 格式之间的数据转换</li>
+</ul>
+
+<pre><code>class MoeRunner:
+    def run(self, dispatch_output, quant_info) -> CombineInput:
+        if self.fused_func is not None:
+            # 融合路径：A2A + 计算一体化
+            return self.fused_func(dispatch_output, quant_info, self.config)
+
+        # 分步路径：排列 -> 计算 -> 反排列
+        runner_input = self.pre_permute_func(dispatch_output, quant_info, ...)
+        runner_output = self.runner_core.run(runner_input, quant_info, ...)
+        return self.post_permute_func(runner_output, quant_info, ...)</code></pre>
+
+<!-- ==================== Section 4 ==================== -->
+<h2 id="ep-moe">4. Expert Parallelism (专家并行)</h2>
+
+<h3 id="deepep">4.1 DeepEP 实现</h3>
+<p class="file-path">sglang/srt/layers/moe/ep_moe/layer.py</p>
+
+<p><code>DeepEPMoE</code> 继承自 <code>FusedMoE</code>，基于 <a href="https://github.com/deepseek-ai/DeepEP">DeepEP</a> 库实现高效的多 GPU 专家并行。</p>
+
+<div class="mermaid">
+sequenceDiagram
+    participant R as Router
+    participant D as Dispatcher
+    participant A as All-to-All
+    participant E as Expert Compute
+    participant C as Combiner
+
+    R->>D: topk_output (weights, ids)
+    D->>A: dispatch tokens to experts
+    Note over A: 跨 GPU 通信
+    A->>E: local tokens per expert
+    E->>E: GEMM1 + Activation + GEMM2
+    E->>C: expert outputs
+    C->>A: combine results
+    Note over A: 跨 GPU 聚合
+    A-->>R: final hidden states
+</div>
+
+<h4>两种 DeepEP 模式</h4>
+<table>
+<tr><th>模式</th><th>场景</th><th>特征</th></tr>
+<tr><td><code>NORMAL</code></td><td>Prefill / 大批量</td><td>高吞吐，异步完成，专家对齐 128</td></tr>
+<tr><td><code>LOW_LATENCY</code></td><td>Decode / 小批量</td><td>低延迟，支持 RDMA，max_dispatch_tokens <= 1024</td></tr>
+<tr><td><code>AUTO</code></td><td>混合推理</td><td>根据 is_extend_in_batch 自动切换</td></tr>
+</table>
+
+<h3 id="ep-dispatch">4.2 Token 分发策略</h3>
+
+<p>在 Expert Parallelism 模式下，每个 GPU 只持有部分专家权重。Token 需要通过 All-to-All 通信发送到持有对应专家的 GPU：</p>
+
+<pre><code># Normal 模式分发核心
+def _dispatch_core(self, x, topk_ids, topk_weights, previous_event):
+    buffer = self._get_buffer()
+    # 1. 计算分发布局
+    layout = buffer.get_dispatch_layout(topk_ids, self.num_experts, ...)
+    # 2. 执行 All-to-All 分发
+    recv_x, recv_topk_ids, recv_topk_weights, num_recv, handle, event = \
+        buffer.dispatch(x, topk_idx=topk_ids, topk_weights=topk_weights, ...)
+    return recv_x, recv_topk_ids, recv_topk_weights, num_recv, event
+
+# Low-Latency 模式
+def _dispatch_core(self, hidden_states, topk_ids):
+    buffer = self._get_buffer()
+    packed_recv, packed_count, handle, event, hook = \
+        buffer.low_latency_dispatch(hidden_states, topk_ids, ...)</code></pre>
+
+<!-- ==================== Section 5 ==================== -->
+<h2 id="token-dispatcher">5. Token Dispatcher 体系</h2>
+
+<h3 id="dispatcher-base">5.1 基础抽象</h3>
+<p class="file-path">sglang/srt/layers/moe/token_dispatcher/base.py</p>
+
+<p><code>BaseDispatcher</code> 定义了统一的 dispatch/combine 接口，并支持 Hook 机制用于扩展。</p>
+
+<div class="mermaid">
+classDiagram
+    class BaseDispatcher {
+        +dispatch(hidden_states, topk_output) DispatchOutput
+        +combine(combine_input) Tensor
+        +register_pre_dispatch_hook()
+        +register_post_dispatch_hook()
+        +register_pre_combine_hook()
+        +register_post_combine_hook()
+    }
+    class StandardDispatcher {
+        +dispatch() StandardDispatchOutput
+        +combine() Tensor
+    }
+    class DeepEPDispatcher {
+        -_normal_dispatcher
+        -_low_latency_dispatcher
+        +dispatch_a()
+        +dispatch_b()
+        +combine_a()
+        +combine_b()
+    }
+    class MooncakeDispatcher {
+        +dispatch()
+        +combine()
+    }
+    BaseDispatcher <|-- StandardDispatcher
+    BaseDispatcher <|-- DeepEPDispatcher
+    BaseDispatcher <|-- MooncakeDispatcher
+</div>
+
+<h4>Dispatch 输出格式</h4>
+<table>
+<tr><th>格式</th><th>类型</th><th>说明</th></tr>
+<tr><td>STANDARD</td><td><code>StandardDispatchOutput</code></td><td>本地计算，包含 topk_weights, topk_ids</td></tr>
+<tr><td>DEEPEP_NORMAL</td><td><code>DeepEPNormalDispatchOutput</code></td><td>Normal 模式通信后的结果，含 num_recv_tokens_per_expert</td></tr>
+<tr><td>DEEPEP_LL</td><td><code>DeepEPLLDispatchOutput</code></td><td>Low-Latency 模式结果，含 masked_m, expected_m</td></tr>
+</table>
+
+<h3 id="dispatcher-deepep">5.2 DeepEP Dispatcher 详解</h3>
+<p class="file-path">sglang/srt/layers/moe/token_dispatcher/deepep.py</p>
+
+<p>DeepEP Dispatcher 实现了两阶段（A/B）的分发和聚合流程，支持异步执行和流水线重叠：</p>
+
+<div class="mermaid">
+flowchart LR
+    subgraph "两阶段分发 (Pipeline)"
+        A[dispatch_a<br/>准备+量化+发起通信] --> B[Between Hooks<br/>可插入其他计算]
+        B --> C[dispatch_b<br/>等待通信完成+后处理]
+    end
+    subgraph "两阶段聚合 (Pipeline)"
+        D[combine_a<br/>反排列+发起通信] --> E[Overlap Computation<br/>重叠计算]
+        E --> F[combine_b<br/>等待通信完成]
+    end
+    style A fill:#1a3a4a,stroke:#39d0d8,color:#e6edf3
+    style C fill:#1a3a4a,stroke:#39d0d8,color:#e6edf3
+    style D fill:#2a1a3a,stroke:#bc8cff,color:#e6edf3
+    style F fill:#2a1a3a,stroke:#bc8cff,color:#e6edf3
+</div>
+
+<h4>DeepEP Buffer 管理</h4>
+<p><code>DeepEPBuffer</code> 是一个全局单例，管理 NVLink 和 RDMA 通信缓冲区。缓冲区大小根据模式自动计算：</p>
+<ul>
+  <li><strong>Normal 模式</strong>：根据 hidden_bytes 和 group_size 计算 NVL/RDMA 缓冲区</li>
+  <li><strong>Low-Latency 模式</strong>：根据 max_dispatch_tokens 和 num_experts 计算 RDMA 缓冲区</li>
+  <li>模式切换时自动调用 <code>clean_low_latency_buffer</code> 清理旧缓冲区</li>
+</ul>
+
+<!-- ==================== Section 6 ==================== -->
+<h2 id="eplb">6. EPLB 专家并行负载均衡</h2>
+<p class="file-path">sglang/srt/eplb/</p>
+
+<p>EPLB (Expert Parallel Load Balancing) 是 SGLang 的运行时专家重平衡系统，通过动态调整专家的物理分布来优化负载均衡。</p>
+
+<div class="mermaid">
+flowchart TB
+    subgraph "EPLB 系统"
+        A[Expert Distribution Recorder<br/>专家分布记录器] -->|统计 topk_ids| B[EPLBManager<br/>负载均衡管理器]
+        B -->|每 N 次迭代| C{是否需要重平衡?}
+        C -->|GPU利用率低| D[Rebalance Algorithm<br/>重平衡算法]
+        C -->|GPU利用率高| E[跳过本轮]
+        D --> F[ExpertLocationMetadata<br/>新的专家位置映射]
+        F --> G[Model Runner<br/>更新专家权重]
+        G --> H[Expert Location Dispatch<br/>更新路由映射]
+    end
+    style B fill:#1a3a4a,stroke:#39d0d8,color:#e6edf3
+    style D fill:#1a2a1a,stroke:#3fb950,color:#e6edf3
+    style F fill:#2a1a3a,stroke:#bc8cff,color:#e6edf3
+</div>
+
+<h3 id="eplb-manager">6.1 EPLB Manager</h3>
+<p class="file-path">sglang/srt/eplb/eplb_manager.py</p>
+
+<p><code>EPLBManager</code> 使用 Python 生成器实现协程式的重平衡调度：</p>
+<pre><code>class EPLBManager:
+    def _entrypoint(self):
+        while True:
+            # 等待 N 次前向传播
+            for _ in range(self._rebalance_num_iterations):
+                yield
+            # 执行重平衡
+            yield from self.rebalance()
+
+    def rebalance(self):
+        # 1. 获取专家分布统计
+        logical_count = recorder.dump_record()["logical_count"]
+        # 2. 检查是否需要重平衡（GPU 利用率阈值）
+        if not self._check_rebalance_needed(utilization_rate):
+            return
+        # 3. 计算新的专家位置
+        metadata = ExpertLocationMetadata.init_by_eplb(logical_count)
+        # 4. 分块更新专家权重
+        for chunk in update_layer_ids_chunks:
+            yield  # 让出控制权，允许推理继续
+            self._model_runner.update_expert_location(metadata, chunk)</code></pre>
+
+<h3 id="eplb-algo">6.2 重平衡算法</h3>
+<p class="file-path">sglang/srt/eplb/eplb_algorithms/__init__.py</p>
+
+<table>
+<tr><th>算法</th><th>适用场景</th><th>特征</th></tr>
+<tr><td><code>deepseek</code></td><td>通用场景</td><td>基于 token 频率的平坦重分配</td></tr>
+<tr><td><code>deepseek_hierarchical</code></td><td>多节点场景</td><td>层级重分配，先节点间再节点内</td></tr>
+<tr><td><code>deepseek_vec</code></td><td>需要逐层优化</td><td>按层向量化的重分配</td></tr>
+<tr><td><code>deepseek_vec_hierarchical</code></td><td>多节点 + 逐层</td><td>向量化 + 层级组合</td></tr>
+<tr><td><code>elasticity_aware</code></td><td>弹性 EP</td><td>感知活跃节点数的重分配</td></tr>
+</table>
+
+<div class="callout">
+<strong>自动算法选择：</strong>当 <code>eplb_algorithm="auto"</code> 时，如果 <code>num_groups % num_nodes == 0</code>，使用 <code>deepseek_hierarchical</code>；否则使用 <code>deepseek</code>。
+</div>
+
+<h3 id="expert-location">6.3 专家位置映射</h3>
+<p class="file-path">sglang/srt/eplb/expert_location.py &amp; expert_location_dispatch.py</p>
+
+<p><code>ExpertLocationMetadata</code> 维护逻辑专家到物理专家的双向映射：</p>
+
+<div class="mermaid">
+graph LR
+    subgraph "映射关系"
+        A[logical_expert_0] -->|物理位置| B[physical_expert_2<br/>GPU 0]
+        A -->|冗余副本| C[physical_expert_8<br/>GPU 2]
+        D[logical_expert_1] -->|物理位置| E[physical_expert_1<br/>GPU 0]
+        D -->|冗余副本| F[physical_expert_5<br/>GPU 1]
+    end
+    style A fill:#1a3a4a,stroke:#39d0d8,color:#e6edf3
+    style D fill:#1a3a4a,stroke:#39d0d8,color:#e6edf3
+</div>
+
+<h4>核心数据结构</h4>
+<ul>
+  <li><code>physical_to_logical_map</code>: (layers, num_physical_experts) -- 物理到逻辑的映射</li>
+  <li><code>logical_to_all_physical_map</code>: (layers, num_logical_experts, X) -- 逻辑到所有物理副本的映射</li>
+  <li><code>logical_to_rank_dispatch_physical_map</code>: (layers, num_logical_experts) -- 每个 rank 的最优物理专家</li>
+</ul>
+
+<h4>分发算法</h4>
+<table>
+<tr><th>算法</th><th>行为</th></tr>
+<tr><td><code>static</code></td><td>预计算每个 rank 的最优物理专家（本 GPU > 本节点 > 其他节点）</td></tr>
+<tr><td><code>dynamic</code></td><td>运行时随机选择物理副本（均匀分散负载）</td></tr>
+</table>
+
+<!-- ==================== Section 7 ==================== -->
+<h2 id="cutlass-moe">7. CUTLASS MoE</h2>
+<p class="file-path">sglang/srt/layers/moe/cutlass_moe.py</p>
+
+<p>CUTLASS MoE 提供基于 NVIDIA CUTLASS 库的高性能 FP8 分组矩阵乘法实现：</p>
+
+<h4>cutlass_fused_experts_fp8</h4>
+<ol>
+  <li><strong>prepare_moe_input</strong>：按 topk_ids 排序 token，计算专家偏移量</li>
+  <li><strong>FP8 量化</strong>：对排序后的输入执行 per-token-group FP8 量化</li>
+  <li><strong>GEMM1</strong>：使用 <code>fp8_blockwise_scaled_grouped_mm</code> 执行上投影</li>
+  <li><strong>SiLU-and-Mul</strong>：融合激活函数</li>
+  <li><strong>GEMM2</strong>：执行下投影</li>
+  <li><strong>apply_shuffle_mul_sum</strong>：反排序 + 加权求和</li>
+</ol>
+
+<p>支持两种变体：</p>
+<ul>
+  <li><code>fp8_blockwise_scaled_grouped_mm</code>：标准 FP8 block-scale 分组 GEMM</li>
+  <li><code>es_fp8_blockwise_scaled_grouped_mm</code>：ES (Expert-Sliced) 优化变体</li>
+</ul>
+
+<!-- ==================== Section 8 ==================== -->
+<h2 id="quantization">8. 量化支持</h2>
+
+<p>SGLang MoE 框架支持丰富的量化方案：</p>
+
+<table>
+<tr><th>量化类型</th><th>精度</th><th>支持后端</th></tr>
+<tr><td>FP8 W8A8</td><td>Weight & Activation 均为 FP8</td><td>Triton, DeepGemm, CUTLASS, FlashInfer</td></tr>
+<tr><td>INT8 W8A8</td><td>Weight & Activation 均为 INT8</td><td>Triton</td></tr>
+<tr><td>INT8 W8A16</td><td>Weight INT8, Activation FP16</td><td>Triton</td></tr>
+<tr><td>INT4 W4A16</td><td>Weight INT4, Activation FP16</td><td>Triton, Marlin</td></tr>
+<tr><td>ModelOpt FP4</td><td>NVIDIA FP4 量化</td><td>FlashInfer CUTLASS, FlashInfer CuTeDSL</td></tr>
+<tr><td>Block Quantization</td><td>分块量化（128x128）</td><td>DeepGemm, CUTLASS</td></tr>
+</table>
+
+<!-- ==================== Section 9 ==================== -->
+<h2 id="tbo">9. 双批次重叠 (TBO)</h2>
+
+<p>Two-Batch Overlap (TBO) 是 SGLang 的关键优化，将 MoE 层的通信与计算重叠：</p>
+
+<div class="mermaid">
+gantt
+    title TBO 双批次重叠时序
+    dateFormat X
+    axisFormat %s
+
+    section Batch A
+    Dispatch A     :a1, 0, 2
+    Expert Compute A :a2, 2, 5
+    Combine A      :a3, 5, 7
+
+    section Batch B
+    Dispatch B     :b1, 2, 4
+    Expert Compute B :b2, 5, 8
+    Combine B      :b3, 8, 10
+
+    section 重叠区域
+    通信与计算重叠  :crit, 2, 5
+</div>
+
+<p>关键参数：</p>
+<ul>
+  <li><code>enable_two_batch_overlap</code>：启用 TBO</li>
+  <li><code>tbo_token_distribution_threshold</code>：Token 分布阈值（默认 0.48），控制何时切换批次</li>
+</ul>
+
+<!-- ==================== Section 10 ==================== -->
+<h2 id="capturer">10. 路由专家捕获 (Routed Experts Capturer)</h2>
+<p class="file-path">sglang/srt/layers/moe/routed_experts_capturer.py</p>
+
+<p><code>RoutedExpertsCapturer</code> 在推理过程中记录每个 token 的路由选择，用于：</p>
+<ul>
+  <li><strong>EPLB 统计</strong>：收集专家使用频率，驱动负载重平衡</li>
+  <li><strong>路由信息返回</strong>：通过 base64 编码将路由结果返回给用户</li>
+  <li><strong>调试分析</strong>：分析专家使用分布</li>
+</ul>
+
+<h4>双缓冲架构</h4>
+<ul>
+  <li><strong>Device Cache</strong>：GPU 上的缓冲区，<code>(max_running_requests, num_layers, topk)</code></li>
+  <li><strong>Host Cache</strong>：CPU Pin Memory 缓冲区，<code>(num_tokens, num_layers, topk)</code></li>
+  <li>每次 forward 结束时，通过 <code>_sync_fwd_experts_buffer_DtoH</code> 将 GPU 数据异步拷贝到 CPU</li>
+</ul>
+
+<!-- ==================== Section 11 ==================== -->
+<h2 id="summary">11. 总结</h2>
+
+<div class="mermaid">
+graph TB
+    subgraph "SGLang MoE 全景图"
+        A[模型层] --> B[FusedMoE Layer<br/>统一入口]
+        B --> C[TopK Router<br/>路由选择]
+        C --> D{部署模式}
+        D -->|单机TP| E[Standard Dispatcher<br/>本地计算]
+        D -->|多机EP| F[DeepEP/Mooncake<br/>Dispatcher]
+        E --> G[MoE Runner]
+        F --> G
+        G --> H{Runner Backend}
+        H --> I[Triton]
+        H --> J[DeepGemm]
+        H --> K[CUTLASS]
+        H --> L[FlashInfer]
+        H --> M[Marlin]
+
+        N[EPLB Manager<br/>负载均衡] -.->|动态调整| C
+        O[Experts Capturer<br/>统计收集] -.->|反馈| N
+    end
+    style B fill:#1a3a4a,stroke:#39d0d8,color:#e6edf3
+    style G fill:#1a2a1a,stroke:#3fb950,color:#e6edf3
+    style N fill:#2a1a3a,stroke:#bc8cff,color:#e6edf3
+</div>
+
+<p>SGLang 的 MoE 模块是一个高度模块化、可扩展的系统：</p>
+
+<ol>
+  <li><strong>多路由策略</strong>：支持 softmax/sigmoid TopK、分组 TopK、带偏置分组 TopK 等多种路由方式，覆盖 DeepSeek、Mixtral、Qwen3、Kimi K2 等主流模型</li>
+  <li><strong>融合内核优化</strong>：Triton 融合内核将排序、GEMM、激活函数、加权求和全部融合，支持 FP8/INT8/INT4 等多种量化精度</li>
+  <li><strong>灵活的执行后端</strong>：MoE Runner 框架统一管理 Triton、DeepGemm、CUTLASS、FlashInfer、Marlin 等多种后端</li>
+  <li><strong>高效的专家并行</strong>：基于 DeepEP 的 Token Dispatcher 支持 Normal/Low-Latency 两种模式，配合两阶段流水线和 TBO 重叠优化</li>
+  <li><strong>动态负载均衡</strong>：EPLB 系统支持运行时专家重分布，采用 DeepSeek、层级、向量化等多种重平衡算法</li>
+  <li><strong>冗余专家支持</strong>：通过 physical/logical 专家映射，支持专家冗余部署和就近路由</li>
+</ol>
+
+</div>
+
+<script>
+mermaid.initialize({
+  startOnLoad: true,
+  theme: 'dark',
+  themeVariables: {
+    primaryColor: '#1a3a4a',
+    primaryTextColor: '#e6edf3',
+    primaryBorderColor: '#39d0d8',
+    lineColor: '#39d0d8',
+    secondaryColor: '#161b22',
+    tertiaryColor: '#1c2333',
+    fontSize: '14px'
+  }
+});
+</script>
+</body>
+</html>

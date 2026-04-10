@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>vLLM Worker 与 GPUModelRunner 深度解析 — CJ-Note</title>
+  <!-- Required meta tags — parsed by scripts/update_index.py to auto-update homepage -->
+  <meta name="report-title" content="vLLM Worker 与 GPUModelRunner 深度解析">
+  <meta name="report-type"  content="repo">
+  <meta name="report-date"  content="2026-04-10">
+  <meta name="report-tags"  content="vllm, framework">
+  <meta name="report-desc"  content="GPUWorker、GPUModelRunner、Executor 层架构、InputBatch 组装、CUDAGraph 优化与模型前向执行流程详解">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #0d1117; --surface: #161b22; --border: #30363d;
+      --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+      --green: #3fb950; --yellow: #d29922; --red: #f85149;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font-sans);
+           line-height: 1.7; padding: 0 1rem; }
+    .page-wrap { max-width: 900px; margin: 0 auto; padding: 2rem 0 4rem; }
+
+    /* Header */
+    .report-header { border-bottom: 1px solid var(--border); padding-bottom: 1.5rem; margin-bottom: 2rem; }
+    .report-header h1 { font-size: 1.9rem; color: var(--accent); margin-bottom: .5rem; }
+    .meta { color: var(--muted); font-size: .85rem; display: flex; gap: 1.5rem; flex-wrap: wrap; }
+    .meta span::before { content: "• "; }
+    .meta span:first-child::before { content: ""; }
+    .back-link { display: inline-block; margin-bottom: 1rem; color: var(--muted);
+                 text-decoration: none; font-size: .85rem; }
+    .back-link:hover { color: var(--accent); }
+
+    /* Sections */
+    h2 { font-size: 1.3rem; color: var(--text); margin: 2.5rem 0 .8rem;
+         padding-bottom: .4rem; border-bottom: 1px solid var(--border); }
+    h3 { font-size: 1.05rem; color: var(--accent); margin: 1.5rem 0 .5rem; }
+    h4 { font-size: .95rem; color: var(--muted); margin: 1rem 0 .3rem; text-transform: uppercase;
+         letter-spacing: .05em; }
+    p { margin-bottom: 1rem; color: var(--text); }
+
+    /* TL;DR box */
+    .tldr { background: var(--surface); border: 1px solid var(--accent);
+            border-left: 4px solid var(--accent); border-radius: 6px;
+            padding: 1rem 1.2rem; margin: 1.5rem 0; }
+    .tldr h3 { color: var(--accent); margin: 0 0 .5rem; font-size: .9rem;
+               text-transform: uppercase; letter-spacing: .1em; }
+    .tldr ul { padding-left: 1.2rem; }
+    .tldr li { margin-bottom: .3rem; }
+
+    /* Key-value info grid */
+    .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                 gap: .75rem; margin: 1rem 0 1.5rem; }
+    .info-card { background: var(--surface); border: 1px solid var(--border);
+                 border-radius: 6px; padding: .8rem 1rem; }
+    .info-card .label { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em;
+                        color: var(--muted); margin-bottom: .3rem; }
+    .info-card .value { font-size: 1.1rem; font-weight: 600; color: var(--accent);
+                        font-family: var(--font-mono); }
+
+    /* Code blocks */
+    pre { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+          padding: 1rem 1.2rem; overflow-x: auto; margin: 1rem 0; font-size: .85rem;
+          font-family: var(--font-mono); line-height: 1.5; }
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 3px;
+           padding: .15em .4em; font-size: .85em; font-family: var(--font-mono); }
+    pre code { background: none; border: none; padding: 0; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .9rem; }
+    th { background: var(--surface); color: var(--muted); font-weight: 600; text-align: left;
+         padding: .6rem .8rem; border: 1px solid var(--border); font-size: .8rem;
+         text-transform: uppercase; letter-spacing: .04em; }
+    td { padding: .6rem .8rem; border: 1px solid var(--border); vertical-align: top; }
+    tr:nth-child(even) td { background: rgba(255,255,255,.02); }
+
+    /* Chart containers */
+    .chart-wrap { background: var(--surface); border: 1px solid var(--border);
+                  border-radius: 8px; padding: 1.2rem; margin: 1.2rem 0; }
+    .chart-wrap h4 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+                     letter-spacing: .05em; margin-bottom: .8rem; }
+    .chart-wrap canvas { max-height: 320px; }
+
+    /* Mermaid diagrams */
+    .diagram-wrap { background: var(--surface); border: 1px solid var(--border);
+                    border-radius: 8px; padding: 1.5rem; margin: 1.2rem 0;
+                    overflow-x: auto; text-align: center; }
+    .diagram-wrap h4 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+                       letter-spacing: .05em; margin-bottom: 1rem; text-align: left; }
+
+    /* Callout boxes */
+    .callout { border-radius: 6px; padding: .8rem 1rem; margin: 1rem 0;
+               border-left: 4px solid; }
+    .callout.note { background: rgba(88,166,255,.07); border-color: var(--accent); }
+    .callout.tip  { background: rgba(63,185,80,.07);  border-color: var(--green); }
+    .callout.warn { background: rgba(210,153,34,.07); border-color: var(--yellow); }
+    .callout.key  { background: rgba(248,81,73,.07);  border-color: var(--red); }
+    .callout strong { display: block; margin-bottom: .3rem; font-size: .85rem;
+                      text-transform: uppercase; letter-spacing: .04em; }
+
+    /* Reference list */
+    .refs ol { padding-left: 1.5rem; }
+    .refs li { margin-bottom: .5rem; font-size: .9rem; color: var(--muted); }
+    .refs a { color: var(--accent); }
+
+    /* TOC */
+    .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+           padding: 1rem 1.2rem; margin: 0 0 2rem; font-size: .9rem; }
+    .toc h3 { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+              letter-spacing: .1em; margin-bottom: .6rem; }
+    .toc ol { padding-left: 1.3rem; }
+    .toc li { margin-bottom: .25rem; }
+    .toc a { color: var(--muted); text-decoration: none; }
+    .toc a:hover { color: var(--accent); }
+
+    /* Footer */
+    .report-footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border);
+                     color: var(--muted); font-size: .8rem; display: flex; justify-content: space-between; }
+
+    /* ul/ol in main content */
+    section ul, section ol { padding-left: 1.5rem; margin-bottom: 1rem; }
+    section li { margin-bottom: .3rem; color: var(--text); }
+  </style>
+</head>
+<body>
+<div class="page-wrap">
+
+  <a href="../index.html" class="back-link">← Back to CJ-Note</a>
+
+  <header class="report-header">
+    <h1>vLLM Worker 与 GPUModelRunner 深度解析</h1>
+    <div class="meta">
+      <span>TYPE: REPO ANALYSIS</span>
+      <span>DATE: 2026-04-10</span>
+      <span>TOPIC: Worker / ModelRunner / CUDAGraph / Attention</span>
+      <span>BASE: vLLM v1 架构</span>
+    </div>
+  </header>
+
+  <!-- TL;DR -->
+  <div class="tldr">
+    <h3>TL;DR</h3>
+    <ul>
+      <li>每个 GPU 对应一个 <code>GPUWorker</code> 进程，由 <code>Executor</code>（Multiproc/Ray/UniProc）统一管理，通过 <code>collective_rpc</code> 广播推理任务。</li>
+      <li><code>GPUModelRunner</code> 是核心推理引擎，执行链为：<code>_update_states → _prepare_inputs → model.forward → _sample → _bookkeeping</code>，每步都高度优化。</li>
+      <li><code>InputBatch</code> 用 CPU pinned memory 维护所有请求的 token_ids、block_table 和采样参数，避免频繁 GPU 内存分配，同时支持 CPU→GPU 异步传输。</li>
+      <li>Decode-only 批次使用预捕获的 <code>CUDAGraph</code> 执行，将数百次 Kernel Launch 压缩为一次 <code>cudaGraphLaunch</code>，大幅降低 CPU 开销（尤其对小 batch 的 decode 阶段）。</li>
+      <li>异步调度（<code>use_async_scheduling=True</code>）将下一步的调度/准备与当前步的 GPU 执行重叠，几乎消除 CPU 空洞，进一步提升吞吐。</li>
+    </ul>
+  </div>
+
+  <!-- Table of Contents -->
+  <nav class="toc">
+    <h3>Contents</h3>
+    <ol>
+      <li><a href="#worker-overview">1. Worker 层概述</a></li>
+      <li><a href="#executor">2. Executor（执行器）</a></li>
+      <li><a href="#gpu-worker">3. GPUWorker</a></li>
+      <li><a href="#gpu-model-runner">4. GPUModelRunner（核心推理）</a></li>
+      <li><a href="#input-batch">5. InputBatch（批次管理）</a></li>
+      <li><a href="#cudagraph">6. CUDAGraph 优化</a></li>
+      <li><a href="#async-scheduling">7. Async Scheduling（异步调度）</a></li>
+      <li><a href="#forward">8. 模型前向传播流程</a></li>
+      <li><a href="#sampler">9. Sampler（采样器）</a></li>
+      <li><a href="#multi-device">10. 多设备支持</a></li>
+      <li><a href="#timing">11. 完整执行时序图</a></li>
+      <li><a href="#refs">References</a></li>
+    </ol>
+  </nav>
+
+  <!-- ── 1. Worker 层概述 ──────────────────────────── -->
+  <section id="worker-overview">
+    <h2>1. Worker 层概述</h2>
+    <p>Worker 层是 vLLM 实际执行模型推理的部分。每个 GPU（或 CPU/XPU/TPU）设备对应一个 Worker 进程。</p>
+
+    <div class="diagram-wrap">
+      <h4>Worker 层整体结构</h4>
+      <div class="mermaid">
+graph TD
+    EC[EngineCore] -->|collective_rpc execute_model| W0
+    EC -->|collective_rpc execute_model| W1
+    EC -->|collective_rpc execute_model| WN
+
+    subgraph W0["Worker 进程 0 (GPU 0)"]
+        MR0[GPUModelRunner]
+        MR0 --> US0[_update_states]
+        MR0 --> PI0[_prepare_inputs]
+        MR0 --> FW0[model.forward]
+        MR0 --> SA0[sampler]
+    end
+
+    subgraph W1["Worker 进程 1 (GPU 1)"]
+        MR1[GPUModelRunner]
+        MR1 --> FW1[同步执行]
+    end
+
+    subgraph WN["Worker 进程 N (GPU N)"]
+        MRN[GPUModelRunner]
+    end
+
+    FW0 <-->|NCCL AllReduce TP并行| FW1
+      </div>
+    </div>
+
+    <h3>1.1 Worker 进程创建时机</h3>
+
+    <div class="diagram-wrap">
+      <h4>Executor 初始化流程</h4>
+      <div class="mermaid">
+graph TD
+    EI["Executor.__init__()"] --> MP["MultiprocExecutor<br/>torch.multiprocessing.spawn()<br/>创建 N 个 Worker 进程<br/>Worker 通过 collective_rpc 接受任务"]
+    EI --> RE["RayExecutor<br/>Ray remote actor 创建 Worker"]
+    EI --> UE["UniProcExecutor<br/>同进程，直接调用 Worker 方法"]
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 2. Executor ──────────────────────────── -->
+  <section id="executor">
+    <h2>2. Executor（执行器）</h2>
+    <p>文件：<code>vllm/v1/executor/</code></p>
+
+    <h3>2.1 Executor 类型</h3>
+    <table>
+      <thead>
+        <tr><th>Executor</th><th>适用场景</th><th>通信方式</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>UniProcExecutor</code></td><td>单 GPU，调试</td><td>直接 Python 调用</td></tr>
+        <tr><td><code>MultiprocExecutor</code></td><td>多 GPU，同节点</td><td>共享内存 + NCCL</td></tr>
+        <tr><td><code>RayDistributedExecutor</code></td><td>多节点，Ray 集群</td><td>Ray RPC + NCCL</td></tr>
+        <tr><td><code>TorchRunDistributedExecutor</code></td><td>torchrun 启动</td><td>NCCL</td></tr>
+      </tbody>
+    </table>
+
+    <h3>2.2 核心接口</h3>
+    <pre><code>class ExecutorBase(ABC):
+
+    @abstractmethod
+    def execute_model(
+        self,
+        scheduler_output: SchedulerOutput,
+        non_block: bool = False,
+    ) -> ModelRunnerOutput | Future[ModelRunnerOutput]:
+        """
+        在所有 Worker 上执行一步模型推理。
+        non_block=True: 立即返回 Future（用于与 CPU 工作重叠）
+        """
+
+    @abstractmethod
+    def collective_rpc(
+        self,
+        method: str,
+        timeout: float | None = None,
+        args: tuple = (),
+        kwargs: dict = {},
+    ) -> list[Any]:
+        """向所有 Worker 广播 RPC 调用"""</code></pre>
+
+    <h3>2.3 MultiprocExecutor 通信模型</h3>
+
+    <div class="diagram-wrap">
+      <h4>MultiprocExecutor 进程间通信</h4>
+      <div class="mermaid">
+sequenceDiagram
+    participant EC as EngineCore 进程
+    participant ME as MultiprocExecutor
+    participant W0 as Worker 进程 (GPU 0)
+
+    EC->>ME: execute_model(scheduler_output)
+    ME->>ME: 序列化 SchedulerOutput<br/>(msgspec msgpack)
+    ME->>W0: IPC Queue 发送
+    W0->>W0: GPUModelRunner.execute_model()
+    W0->>W0: 模型推理
+    W0-->>ME: IPC Queue 返回 ModelRunnerOutput
+    Note over W0: 只有 rank=0 返回结果<br/>其余 Worker 结果通过 NCCL 收集
+    ME-->>EC: ModelRunnerOutput
+      </div>
+    </div>
+
+    <h3>2.4 <code>execute_model()</code> 与 non_block 异步</h3>
+    <pre><code># EngineCore.step() 中的关键优化：
+
+# non_block=True：立即返回，GPU 在后台执行
+future = executor.execute_model(scheduler_output, non_block=True)
+
+# 在 GPU 执行期间，CPU 同时处理结构化输出语法（O(n) 操作）
+grammar_output = scheduler.get_grammar_bitmask(scheduler_output)
+
+# 等待 GPU 完成（如果 grammar 先完成，则等待为 0）
+model_output = future.result()</code></pre>
+  </section>
+
+  <!-- ── 3. GPUWorker ──────────────────────────── -->
+  <section id="gpu-worker">
+    <h2>3. GPUWorker</h2>
+    <p>文件：<code>vllm/v1/worker/gpu_worker.py</code></p>
+
+    <h3>3.1 职责</h3>
+    <ul>
+      <li>初始化 CUDA 设备和 NCCL 通信</li>
+      <li>分布式初始化（NCCL Process Group）</li>
+      <li>加载模型权重（含 TP/PP 切分）</li>
+      <li>分配 KV Cache 张量（GPU 显存）</li>
+      <li>接受 SchedulerOutput，调用 GPUModelRunner</li>
+      <li>返回 ModelRunnerOutput</li>
+    </ul>
+
+    <h3>3.2 初始化流程</h3>
+
+    <div class="diagram-wrap">
+      <h4>GPUWorker 初始化步骤</h4>
+      <div class="mermaid">
+graph TD
+    INIT["GPUWorker.__init__(vllm_config, rank, local_rank)"]
+    INIT --> S1["1. 设置 CUDA device<br/>torch.cuda.set_device(local_rank)"]
+    S1 --> S2["2. 初始化分布式通信<br/>init_process_group(backend='nccl')<br/>init_model_parallel(TP, PP groups)"]
+    S2 --> S3["3. 构建模型（含 TP 权重切分）<br/>model = build_model(vllm_config)<br/>← ColumnParallelLinear / RowParallelLinear"]
+    S3 --> S4["4. 加载权重<br/>model.load_weights(hf_weights_iterator)<br/>← 每个 GPU 只加载对应 TP shard"]
+    S4 --> S5["5. 创建 GPUModelRunner<br/>self.model_runner = GPUModelRunner(vllm_config, model, ...)"]
+      </div>
+    </div>
+
+    <h3>3.3 <code>init_kv_caches()</code> 流程</h3>
+
+    <div class="diagram-wrap">
+      <h4>KV Cache 分配流程</h4>
+      <div class="mermaid">
+graph TD
+    IKV["GPUWorker.init_kv_caches(kv_cache_configs)"]
+    IKV --> K1["1. 计算每层 KV Cache 形状<br/>kv_cache_spec = model.get_kv_cache_spec()<br/>← 每层：num_heads, head_size, is_mla, ..."]
+    K1 --> K2["2. 分配 GPU KV Cache 张量<br/>for layer_idx, spec in enumerate(kv_cache_spec):<br/>    kv_cache[layer_idx] = torch.zeros(<br/>        spec.get_shape(num_gpu_blocks),<br/>        dtype=spec.dtype, device='cuda')"]
+    K2 --> K3["3. 将 KV Cache 绑定到模型层<br/>model.set_kv_caches(kv_cache)<br/>← 每个 Attention 层持有对应 kv_cache 张量的引用"]
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 4. GPUModelRunner ──────────────────────────── -->
+  <section id="gpu-model-runner">
+    <h2>4. GPUModelRunner（核心推理）</h2>
+    <p>文件：<code>vllm/v1/worker/gpu_model_runner.py</code>（约 6000+ 行，核心文件）</p>
+
+    <h3>4.1 执行入口 <code>execute_model()</code></h3>
+
+    <div class="diagram-wrap">
+      <h4>execute_model 执行链</h4>
+      <div class="mermaid">
+graph TD
+    EM["execute_model(scheduler_output)"]
+    EM --> US["1. _update_states(scheduler_output)<br/>更新内存中的请求状态缓存"]
+    US --> PI["2. _prepare_inputs(scheduler_output)<br/>构建 GPU 推理所需的所有张量<br/>→ input_ids, positions, attn_metadata, ..."]
+    PI --> DE["3. _determine_batch_execution_and_padding(...)<br/>决定使用 CUDAGraph 还是 Eager 模式"]
+    DE --> FW["4. model.forward(input_ids, positions, kv_caches, attn_metadata)<br/>→ hidden_states [total_tokens, hidden_size]<br/>→ logits [num_decode_tokens, vocab_size]"]
+    FW --> SP["5. _sample(logits, spec_decode_metadata)<br/>→ sampler_output (sampled_token_ids)"]
+    SP --> BK["6. _bookkeeping_sync(...)<br/>将采样结果写入 input_batch<br/>计算 prompt logprobs（如需要）"]
+    BK --> RET["7. 返回 ModelRunnerOutput<br/>- req_ids<br/>- sampled_token_ids<br/>- logprobs（如需要）<br/>- pooler_output（Embedding 任务）"]
+      </div>
+    </div>
+
+    <h3>4.2 <code>_update_states()</code> 详解</h3>
+    <pre><code>def _update_states(self, scheduler_output: SchedulerOutput):
+    """
+    根据调度结果更新 ModelRunner 内部的请求状态缓存。
+    避免每次都从 SchedulerOutput 重新重建所有请求的状态。
+    """
+    # 1. 处理新请求
+    for req_data in scheduler_output.scheduled_new_reqs:
+        req_id = req_data.req_id
+        self.requests[req_id] = CachedRequestState(
+            req_id=req_id,
+            prompt_token_ids=req_data.prompt_token_ids,
+            prompt=req_data.prompt,
+            mm_inputs=req_data.mm_inputs,
+            sampling_params=req_data.sampling_params,
+            # 初始状态
+            output_token_ids=[],
+            generator=req_data.generator,
+        )
+        # 设置 block_table 到 input_batch
+        self.input_batch.add_request(...)
+
+    # 2. 更新已有请求（新的 block_ids）
+    for req_data in scheduler_output.scheduled_cached_reqs:
+        req_id = req_data.req_id
+        req_state = self.requests[req_id]
+        # 更新 block_ids（新分配的块）
+        req_state.block_ids = req_data.new_block_ids
+        # 更新 input_batch 中的 block_table
+        self.input_batch.update_request(req_id, req_data)
+
+    # 3. 移除完成的请求
+    for req_id in scheduler_output.finished_req_ids:
+        del self.requests[req_id]
+        self.input_batch.remove_request(req_id)</code></pre>
+
+    <h3>4.3 <code>_prepare_inputs()</code> 详解</h3>
+    <p>这是最复杂的步骤，需要构建多个张量：</p>
+    <pre><code>def _prepare_inputs(self, scheduler_output: SchedulerOutput):
+    """构建模型推理所需的所有 GPU 张量"""
+
+    total_num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
+    num_reqs = self.input_batch.num_reqs
+
+    # ── 1. 构建 input_ids ──────────────────────────────────────────
+    # 对于每个请求，取 [num_computed_tokens : num_computed_tokens + num_scheduled]
+    # 形状: [total_num_scheduled_tokens]
+    input_ids = torch.zeros(total_num_scheduled_tokens, dtype=torch.int32, device="cuda")
+    # 从 input_batch.token_ids_cpu 按请求拼接填充
+
+    # ── 2. 构建 positions ─────────────────────────────────────────
+    # 每个 token 的绝对位置（用于 RoPE）
+    # 对请求 r，scheduled token k 的 position = num_computed_tokens_r + k
+    positions = torch.zeros(total_num_scheduled_tokens, dtype=torch.int64, device="cuda")
+
+    # ── 3. 构建 block_table ───────────────────────────────────────
+    # 形状: [num_reqs, max_num_blocks_per_req]
+    # block_table[i, j] = req i 的第 j 个逻辑块对应的物理块 ID
+    block_table = self.input_batch.block_table_cpu_tensor[:num_reqs].to("cuda")
+
+    # ── 4. 构建 slot_mapping ─────────────────────────────────────
+    # 形状: [total_num_scheduled_tokens]
+    # slot_mapping[i] = 第 i 个 token 的 KV Cache 写入位置
+    # = block_id × block_size + position_within_block
+    slot_mapping = compute_slot_mapping(
+        block_table, num_computed_tokens_per_req, num_scheduled_tokens_per_req
+    )
+
+    # ── 5. 构建 AttentionMetadata ─────────────────────────────────
+    attn_metadata = attn_backend.build_metadata(
+        num_prefills=...,
+        num_prefill_tokens=...,
+        num_decode_tokens=...,
+        query_start_loc=...,     # 每个请求 query 的起始位置
+        seq_lens=...,             # 每个请求的完整序列长度（含历史）
+        max_query_len=...,
+        block_table=block_table,
+        slot_mapping=slot_mapping,
+    )
+
+    # ── 6. 多模态特征（如有）──────────────────────────────────────
+    mm_kwargs = build_multimodal_kwargs(scheduled_reqs)
+
+    # ── 7. LoRA 设置（如有）──────────────────────────────────────
+    if self.lora_enabled:
+        set_active_loras(scheduled_reqs)
+
+    return input_ids, positions, attn_metadata, mm_kwargs</code></pre>
+
+    <h3>4.4 输入构建的数据流</h3>
+
+    <div class="diagram-wrap">
+      <h4>从 SchedulerOutput 到 GPU Tensors 的数据流</h4>
+      <div class="mermaid">
+graph TD
+    SO["SchedulerOutput (来自 Scheduler)
+    scheduled_new_reqs[]
+    scheduled_cached_reqs[]
+    num_scheduled_tokens: {req_id: n}"]
+
+    IB["InputBatch (GPU 侧缓存)
+    token_ids_cpu[num_reqs, max_len]
+    num_tokens_no_spec[num_reqs]
+    block_table_cpu[num_reqs, max_blocks]
+    sampling_metadata"]
+
+    GT["GPU Tensors
+    input_ids [total_tokens]
+    positions [total_tokens]
+    block_table [num_reqs, max_blocks]
+    slot_mapping [total_tokens]
+    attn_metadata"]
+
+    SO -->|_update_states| IB
+    IB -->|_prepare_inputs| GT
+
+    GT --> E1["→ embed_tokens → hidden_states"]
+    GT --> E2["→ RoPE 编码"]
+    GT --> E3["→ PagedAttention 块寻址"]
+    GT --> E4["→ KV Cache 写入槽位"]
+    GT --> E5["→ Attention 后端参数"]
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 5. InputBatch ──────────────────────────── -->
+  <section id="input-batch">
+    <h2>5. InputBatch（批次管理）</h2>
+    <p>文件：<code>vllm/v1/worker/gpu_input_batch.py</code></p>
+
+    <h3>5.1 数据结构</h3>
+    <pre><code>class InputBatch:
+    """维护当前 batch 中所有请求的状态"""
+
+    # 请求列表（有序，用于索引）
+    req_ids: list[str]
+    req_id_to_index: dict[str, int]
+
+    # CPU 侧张量（pinned memory，支持异步 CPU→GPU 传输）
+    token_ids_cpu: np.ndarray        # [num_reqs, max_model_len]  token ID
+    num_tokens_no_spec: np.ndarray   # [num_reqs]  当前 token 数（不含推测）
+    block_table_cpu: np.ndarray      # [num_reqs, max_blocks]  block 映射
+
+    # GPU 侧张量（常驻，减少分配）
+    token_ids_gpu: torch.Tensor      # [num_reqs, max_model_len]
+    block_table_gpu: torch.Tensor    # [num_reqs, max_blocks]
+
+    # 采样参数（批量化，避免逐请求循环）
+    sampling_metadata: SamplingMetadata
+
+    # 推测解码
+    prev_sampled_token_ids: torch.Tensor | None</code></pre>
+
+    <h3>5.2 CachedRequestState</h3>
+    <pre><code>class CachedRequestState:
+    """ModelRunner 侧的请求状态（轻量缓存）"""
+    req_id: str
+    prompt_token_ids: list[int]
+    sampling_params: SamplingParams
+    output_token_ids: list[int]       # 已生成的 token
+    block_ids: list[list[int]]        # 当前分配的物理块
+    generator: torch.Generator | None # 随机数生成器（用于可复现采样）</code></pre>
+
+    <div class="callout note">
+      <strong>设计要点</strong>
+      CPU pinned memory 的 <code>token_ids_cpu</code> 和 <code>block_table_cpu</code> 支持 DMA 异步传输到 GPU，避免 Python 侧每步分配新 Tensor 的开销。GPU 侧常驻张量则进一步消除显存分配延迟。
+    </div>
+  </section>
+
+  <!-- ── 6. CUDAGraph ──────────────────────────── -->
+  <section id="cudagraph">
+    <h2>6. CUDAGraph 优化</h2>
+
+    <h3>6.1 为什么需要 CUDAGraph</h3>
+
+    <div class="callout warn">
+      <strong>没有 CUDAGraph 的 CPU 开销</strong>
+      Python 侧循环逐个 Kernel Launch，每个 Kernel Launch ≈ 5–20 μs CPU 开销。一个 Transformer 层有 10+ Kernel，32 层模型 ≈ 320 Kernel × 10 μs = <strong>3.2 ms CPU 开销</strong>，严重限制小 batch decode 的吞吐。
+    </div>
+
+    <div class="callout tip">
+      <strong>使用 CUDAGraph 后</strong>
+      第一次执行时"录制"，之后只需 <code>cudaGraphLaunch()</code> 一次。单次 Launch ≈ 5–10 μs，无论模型多大。对 Decode 阶段（batch 小，GPU 计算快）收益最大。
+    </div>
+
+    <h3>6.2 CUDAGraph 捕获流程</h3>
+
+    <div class="diagram-wrap">
+      <h4>Warmup 阶段 CUDAGraph 捕获</h4>
+      <div class="mermaid">
+graph TD
+    WU["warmup 阶段（推理前执行一次）"]
+    WU --> LOOP["for batch_size in 1,2,4,8,16,32,...<br/>for lora_variant in no_lora, lora_1, ..."]
+    LOOP --> P1["1. 准备固定形状的 dummy 输入<br/>input_ids = zeros([batch_size])<br/>positions = zeros([batch_size])<br/>attn_meta = dummy decode metadata"]
+    P1 --> P2["2. 预热（确保 Kernel 已编译）<br/>for _ in range(2): model.forward(dummy_inputs)"]
+    P2 --> P3["3. 捕获 CUDAGraph<br/>with torch.cuda.graph(cuda_graph):<br/>    output = model.forward(dummy_inputs)"]
+    P3 --> P4["4. 保存到 cudagraph_dispatcher<br/>dispatch_key = (batch_size, lora_variant, ...)<br/>cudagraph_dict[dispatch_key] = (graph, input_buffers, output_buffers)"]
+      </div>
+    </div>
+
+    <h3>6.3 CUDAGraph 执行</h3>
+    <pre><code>def _run_with_cudagraph(
+    self,
+    batch_descriptor: BatchDescriptor,
+    input_ids: torch.Tensor,
+    positions: torch.Tensor,
+    attn_metadata: AttentionMetadata,
+):
+    """使用预捕获的 CUDAGraph 执行推理"""
+
+    # 1. 将实际数据拷贝到 Graph 的静态输入缓冲区
+    input_buffers = batch_descriptor.input_buffers
+    input_buffers["input_ids"][:num_tokens].copy_(input_ids)
+    input_buffers["positions"][:num_tokens].copy_(positions)
+    # 注意：kv_cache 张量本身就是静态的，不需要拷贝
+
+    # 2. replay CUDAGraph（一次 API 调用完成所有 Kernel）
+    batch_descriptor.graph.replay()
+
+    # 3. 从静态输出缓冲区读取结果
+    logits = batch_descriptor.output_buffers["logits"]
+    hidden_states = batch_descriptor.output_buffers["hidden_states"]
+
+    return logits, hidden_states</code></pre>
+
+    <h3>6.4 何时使用 CUDAGraph</h3>
+
+    <table>
+      <thead>
+        <tr><th>条件</th><th>模式</th><th>说明</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>所有请求都在 Decode 阶段（每请求 1 个 token）</td>
+          <td><span style="color:var(--green)">CUDAGraph</span></td>
+          <td>batch_size 需在预捕获范围内</td>
+        </tr>
+        <tr>
+          <td>有 Prefill 请求（序列长度可变）</td>
+          <td><span style="color:var(--red)">Eager</span></td>
+          <td>形状不固定，无法 replay</td>
+        </tr>
+        <tr>
+          <td>Chunked Prefill（混合 Prefill+Decode）</td>
+          <td><span style="color:var(--red)">Eager</span></td>
+          <td>形状动态变化</td>
+        </tr>
+        <tr>
+          <td>batch_size 超出预捕获范围</td>
+          <td><span style="color:var(--red)">Eager</span></td>
+          <td>找不到匹配 graph</td>
+        </tr>
+        <tr>
+          <td>强制禁用（<code>enforce_eager=True</code>）</td>
+          <td><span style="color:var(--red)">Eager</span></td>
+          <td>调试/兼容性用途</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>6.5 Dispatch 流程</h3>
+
+    <div class="diagram-wrap">
+      <h4>CUDAGraph Dispatch 判断逻辑</h4>
+      <div class="mermaid">
+graph TD
+    D["_determine_batch_execution_and_padding(num_tokens, num_reqs, ...)"]
+    D --> CHK{"is_uniform_decode?<br/>max_num_scheduled_tokens == 1<br/>AND num_tokens == num_reqs"}
+    CHK -->|Yes| DISP["CUDAGraph Dispatcher 查找<br/>cudagraph_dispatcher.dispatch(num_tokens_padded, ...)"]
+    CHK -->|No| EAGER["返回 CUDAGraphMode.NONE → Eager 模式"]
+    DISP --> FOUND{"找到匹配 graph?"}
+    FOUND -->|Yes| CG["返回 CUDAGraphMode.FULL 或 PARTIAL<br/>+ batch_descriptor"]
+    FOUND -->|No| EAGER
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 7. Async Scheduling ──────────────────────────── -->
+  <section id="async-scheduling">
+    <h2>7. Async Scheduling（异步调度）</h2>
+    <p>vLLM v1 支持<strong>异步调度</strong>（<code>use_async_scheduling=True</code>），进一步隐藏调度延迟。</p>
+
+    <h3>7.1 同步 vs 异步时间线对比</h3>
+
+    <div class="diagram-wrap">
+      <h4>同步 vs 异步调度时间线</h4>
+      <div class="mermaid">
+gantt
+    title 同步调度（传统）
+    dateFormat X
+    axisFormat %s
+
+    section Step N
+    Schedule   :s1, 0, 1
+    Prepare    :s2, after s1, 1
+    Forward    :s3, after s2, 3
+    Sample     :s4, after s3, 1
+    Update     :s5, after s4, 1
+
+    section Step N+1
+    Schedule   :s6, after s5, 1
+    Prepare    :s7, after s6, 1
+    Forward    :s8, after s7, 3
+    Sample     :s9, after s8, 1
+    Update     :s10, after s9, 1
+      </div>
+    </div>
+
+    <div class="callout note">
+      <strong>异步调度收益</strong>
+      异步模式下，Step N 的 <code>[Update]</code> 与 Step N+1 的 <code>[Schedule+Prepare]</code> 重叠执行，GPU 几乎无空洞，CPU pipeline 充分利用。
+    </div>
+
+    <h3>7.2 异步调度实现</h3>
+    <pre><code># GPUModelRunner 异步调度模式
+def execute_model(self, scheduler_output):
+    if self.use_async_scheduling:
+        # 1. 先用上一步采样的 token（GPU 上缓存）
+        #    不等待 CPU 侧的 token 确认
+        input_ids = self._build_inputs_from_prev_sampled_tokens()
+
+        # 2. 正常执行模型
+        logits, hidden_states = self._forward_and_sample(input_ids, ...)
+
+        # 3. 采样（GPU 上，不同步到 CPU）
+        #    结果保存在 self.input_batch.prev_sampled_token_ids
+        sampler_output = self._sample_async(logits)
+
+        # 4. bookkeeping 在下一步的 prepare_inputs 中做
+        #    本步不等待 CPU 同步
+        return ModelRunnerOutput(use_async=True, ...)
+
+    else:
+        # 同步路径...</code></pre>
+  </section>
+
+  <!-- ── 8. 模型前向传播 ──────────────────────────── -->
+  <section id="forward">
+    <h2>8. 模型前向传播流程</h2>
+    <p>以 Llama-3 为例，说明模型内部的前向传播过程：</p>
+
+    <div class="diagram-wrap">
+      <h4>Llama-3 前向传播（单层展开）</h4>
+      <div class="mermaid">
+graph TD
+    IN["model.forward(input_ids, positions, kv_caches, attn_metadata)"]
+    IN --> EMB["embed_tokens(input_ids)<br/>→ hidden_states [total_tokens, hidden_size]"]
+    EMB --> LOOP["for layer_idx, layer in enumerate(self.layers)"]
+
+    LOOP --> LN1["1. input_layernorm(hidden_states)"]
+    LN1 --> ATTN["2. self_attn(hidden_states, positions, kv_caches[layer_idx], attn_metadata)"]
+
+    ATTN --> QKV["qkv_proj(hidden_states)<br/>→ q [total_tokens, num_heads × head_size]<br/>→ k [total_tokens, num_kv_heads × head_size]<br/>→ v [total_tokens, num_kv_heads × head_size]"]
+    QKV --> ROPE["rope(q, k, positions)<br/>→ q, k with rotary position encoding"]
+    ROPE --> ABK["attn_backend.forward(q,k,v,kv_cache,attn_meta)<br/>写入新 K,V 到 kv_cache (按 slot_mapping)<br/>Prefill: Full Attention (FlashAttention)<br/>Decode: PagedAttention (FlashInfer)<br/>→ attn_output [total_tokens, num_heads × head_size]"]
+    ABK --> OPROJ["o_proj(attn_output)<br/>→ hidden_states 残差连接"]
+
+    OPROJ --> LN2["3. post_attention_layernorm(hidden_states)"]
+    LN2 --> MLP["4. mlp(hidden_states)<br/>gate_proj [ColumnParallel]<br/>up_proj [ColumnParallel]<br/>act_fn(gate × up)<br/>down_proj [RowParallel + AllReduce]"]
+    MLP --> LOOP
+
+    LOOP --> NORM["norm(hidden_states)"]
+    NORM --> LMH["lm_head(hidden_states)<br/>→ logits [total_tokens, vocab_size]<br/>decode_logits = logits[decode_token_positions, :]"]
+      </div>
+    </div>
+
+    <h3>8.1 Prefill vs Decode Attention 的区别</h3>
+
+    <table>
+      <thead>
+        <tr><th>阶段</th><th>Q shape</th><th>KV 来源</th><th>Mask</th><th>实现</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Prefill</strong>（新请求 prompt tokens）</td>
+          <td><code>[seq_len, num_heads, head_size]</code></td>
+          <td>当前序列内（自注意力）</td>
+          <td>下三角因果 mask</td>
+          <td>FlashAttention</td>
+        </tr>
+        <tr>
+          <td><strong>Decode</strong>（生成新 token）</td>
+          <td><code>[1, num_heads, head_size]</code></td>
+          <td>KV Cache（历史，非连续分页）</td>
+          <td>无（全历史注意力）</td>
+          <td>FlashInfer / Paged Decode Kernel</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout note">
+      <strong>混合批次处理</strong>
+      同一个 batch 可能同时包含 Prefill 和 Decode 请求（Chunked Prefill）。<code>attn_metadata</code> 中通过 <code>query_start_loc</code> 精确区分每个请求的 token 范围，后端负责对不同类型的请求分别调用对应的 Attention Kernel。
+    </div>
+  </section>
+
+  <!-- ── 9. Sampler ──────────────────────────── -->
+  <section id="sampler">
+    <h2>9. Sampler（采样器）</h2>
+    <p>文件：<code>vllm/v1/sample/sampler.py</code></p>
+
+    <h3>9.1 采样流程</h3>
+
+    <div class="diagram-wrap">
+      <h4>Sampler 执行流程</h4>
+      <div class="mermaid">
+graph TD
+    SF["Sampler.forward(logits, sampling_metadata)"]
+    SF --> LP["1. 应用 LogitsProcessor<br/>（用户自定义，如 bad_words 过滤）"]
+    LP --> LPB["2. 计算 logprobs（如需要）"]
+    LPB --> GRP["3. 按请求类型分组采样"]
+
+    GRP --> GRD["Greedy 采样 (temperature=0)<br/>sampled = torch.argmax(logits, dim=-1)"]
+    GRP --> RND["Random 采样 (temperature>0)<br/>logits /= temperature<br/>top_k_filter → top_p_filter → min_p_filter<br/>probs = softmax(logits)<br/>sampled = multinomial(probs)"]
+    GRP --> PEN["惩罚处理 (repetition_penalty 等)<br/>logits = apply_penalties(logits, output_token_ids)"]
+
+    GRD --> OUT["4. 返回 SamplerOutput<br/>sampled_token_ids: Tensor [num_reqs, 1]<br/>logprobs_tensors: LogprobsTensors | None"]
+    RND --> OUT
+    PEN --> OUT
+      </div>
+    </div>
+
+    <h3>9.2 SamplingMetadata 批量化</h3>
+    <p>为避免逐请求循环（Python 慢），采样参数被批量化为张量：</p>
+    <pre><code>class SamplingMetadata:
+    """所有请求的采样参数，批量化为张量形式"""
+
+    temperature: torch.Tensor    # [num_reqs] 每个请求的 temperature
+    top_p: torch.Tensor          # [num_reqs]
+    top_k: torch.Tensor          # [num_reqs]
+    min_p: torch.Tensor          # [num_reqs]
+
+    do_top_p_top_k: bool         # 是否有请求需要 top-p/top-k 过滤
+    do_temperatures: bool        # 是否需要 temperature 缩放
+
+    generators: dict[int, torch.Generator]  # req_idx → 随机数生成器</code></pre>
+
+    <div class="callout tip">
+      <strong>批量化的意义</strong>
+      将 N 个请求的采样参数预先向量化为 Tensor，使得 temperature 缩放、top-k/top-p 过滤等操作可以对整个 batch 执行单次 GPU 向量运算，而非 Python 循环 N 次。这对于大 batch size 时的采样性能至关重要。
+    </div>
+  </section>
+
+  <!-- ── 10. 多设备支持 ──────────────────────────── -->
+  <section id="multi-device">
+    <h2>10. 多设备支持</h2>
+
+    <h3>10.1 设备抽象层</h3>
+    <p><code>vllm/platforms/</code> 提供设备抽象，统一接口屏蔽底层差异：</p>
+    <ul>
+      <li><code>CudaPlatform</code> → GPU（NVIDIA）</li>
+      <li><code>RocmPlatform</code> → GPU（AMD ROCm）</li>
+      <li><code>CpuPlatform</code> → CPU（Intel）</li>
+      <li><code>XpuPlatform</code> → XPU（Intel Gaudi）</li>
+      <li><code>TpuPlatform</code> → TPU（Google）</li>
+    </ul>
+
+    <h3>10.2 各设备 ModelRunner</h3>
+    <table>
+      <thead>
+        <tr><th>Worker</th><th>ModelRunner</th><th>Attention Backend</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>GPUWorker</code></td><td><code>GPUModelRunner</code></td><td>FlashAttention / FlashInfer</td></tr>
+        <tr><td><code>CPUWorker</code></td><td><code>CPUModelRunner</code></td><td>CPU Kernel</td></tr>
+        <tr><td><code>XPUWorker</code></td><td><code>XPUModelRunner</code></td><td>XPU Kernel</td></tr>
+        <tr><td><code>TPUWorker</code></td><td>基于 XLA</td><td>XLA Paged Attention</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ── 11. 完整执行时序图 ──────────────────────────── -->
+  <section id="timing">
+    <h2>11. 完整执行时序图</h2>
+
+    <div class="diagram-wrap">
+      <h4>EngineCore → Executor → Worker 完整时序</h4>
+      <div class="mermaid">
+sequenceDiagram
+    participant EC as EngineCore
+    participant EX as Executor
+    participant W0 as GPUWorker rank=0
+    participant W1 as GPUWorker rank=1
+
+    EC->>EC: schedule()
+    EC->>EX: execute_model(sched_out)
+    EX->>W0: broadcast via collective_rpc
+    EX->>W1: broadcast via collective_rpc
+
+    W0->>W0: _update_states()
+    W0->>W0: _prepare_inputs()
+    W1->>W1: _update_states()
+    W1->>W1: _prepare_inputs()
+
+    W0->>W0: model.forward() embed_tokens()
+    W1->>W1: model.forward() embed_tokens()
+
+    loop 每一层 (0..N)
+        W0->>W0: attention()
+        W1->>W1: attention()
+        W0<<->>W1: NCCL AllReduce (TP)
+        W0->>W0: mlp()
+        W1->>W1: mlp()
+        W0<<->>W1: NCCL AllReduce (TP)
+    end
+
+    W0->>W0: lm_head() → logits
+    W0->>W0: sampler() → sampled_token_ids
+
+    W0-->>EX: ModelRunnerOutput (rank=0 返回)
+    EX-->>EC: ModelRunnerOutput
+
+    EC->>EC: update_from_outputs()
+    EC->>EC: → EngineCoreOutputs
+    Note over EC: next step: schedule() ...
+      </div>
+    </div>
+
+    <h3>11.1 CUDAGraph Replay 时序对比</h3>
+
+    <div class="callout warn">
+      <strong>无 CUDAGraph（Eager 模式，混合 Prefill+Decode）</strong>
+      <code>[prepare inputs] → [CPU→GPU transfer] → [FW Att.] → [Layer 0] → [Layer 1] → ... → [Layer N] → [logits] → [sample]</code>
+      每个 Kernel 单独 Launch，CPU 开销随层数线性增长。
+    </div>
+
+    <div class="callout tip">
+      <strong>有 CUDAGraph（Decode-only 批次）</strong>
+      <code>[prepare inputs] → [memcpy to static buffers] → [Graph Replay（单次 cudaGraphLaunch，所有 Kernel 一起执行）]</code>
+      CPU 开销极低（约 5–10 μs），GPU 执行完全重叠，Decode 吞吐大幅提升。
+    </div>
+  </section>
+
+  <!-- ── References ──────────────────────────── -->
+  <section id="refs" class="refs">
+    <h2>References</h2>
+    <ol>
+      <li><a href="https://github.com/vllm-project/vllm/blob/main/vllm/v1/worker/gpu_worker.py" target="_blank">vllm/v1/worker/gpu_worker.py — GPUWorker 实现</a></li>
+      <li><a href="https://github.com/vllm-project/vllm/blob/main/vllm/v1/worker/gpu_model_runner.py" target="_blank">vllm/v1/worker/gpu_model_runner.py — GPUModelRunner 核心（6000+ 行）</a></li>
+      <li><a href="https://github.com/vllm-project/vllm/blob/main/vllm/v1/worker/gpu_input_batch.py" target="_blank">vllm/v1/worker/gpu_input_batch.py — InputBatch 批次管理</a></li>
+      <li><a href="https://github.com/vllm-project/vllm/tree/main/vllm/v1/executor/" target="_blank">vllm/v1/executor/ — Executor 层（UniProc/Multiproc/Ray）</a></li>
+      <li><a href="https://github.com/vllm-project/vllm/blob/main/vllm/v1/sample/sampler.py" target="_blank">vllm/v1/sample/sampler.py — Sampler 采样器</a></li>
+      <li><a href="https://pytorch.org/docs/stable/cuda.html#torch.cuda.CUDAGraph" target="_blank">PyTorch CUDAGraph 官方文档</a></li>
+      <li><a href="https://arxiv.org/abs/2309.06180" target="_blank">PagedAttention 论文（Efficient Memory Management for Large Language Model Serving）</a></li>
+    </ol>
+  </section>
+
+  <footer class="report-footer">
+    <span>CJ-Note · LLM Inference Research</span>
+    <span>Generated 2026-04-10</span>
+  </footer>
+</div>
+
+<script>
+  // Initialize Mermaid with dark theme
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      background: '#161b22',
+      primaryColor: '#1f6feb',
+      primaryTextColor: '#e6edf3',
+      lineColor: '#8b949e',
+      secondaryColor: '#21262d',
+      tertiaryColor: '#0d1117'
+    }
+  });
+</script>
+</body>
+</html>
